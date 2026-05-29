@@ -1,12 +1,13 @@
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:sqflite/sqflite.dart'; // Importa o openDatabase global
+// Importa o openDatabase global
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'auth_service.dart';
 import 'home_page.dart';
-// sugestão de código para lib/main.dart
+
 final AuthService _authService = AuthService();
+
 void main() {
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
     sqfliteFfiInit();
@@ -49,63 +50,97 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _emailRecuperacaoController = TextEditingController(); // Novo controlador para recuperação
+  
   bool _obscurePassword = true;
+  bool _modoRecuperacao = false; // Define se exibe o Login ou a Recuperação
 
   @override
   void dispose() {
     _emailController.dispose();
     _passwordController.dispose();
+    _emailRecuperacaoController.dispose();
     super.dispose();
   }
 
- void _submitLogin() async {
-  if (_formKey.currentState!.validate()) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => const Center(child: CircularProgressIndicator()),
-    );
+  void _submitLogin() async {
+    if (_formKey.currentState!.validate()) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
 
-    // 1. O aplicativo aguarda a resposta do banco aqui...
-    UsuarioLogado? perfilLogado = await _authService.loginLocal(
-      _emailController.text,
-      _passwordController.text,
-    );
+      UsuarioLogado? perfilLogado = await _authService.loginLocal(
+        _emailController.text,
+        _passwordController.text,
+      );
 
-    // ==========================================
-    // 2. A TRAVA DE SEGURANÇA (CORREÇÃO AQUI):
-    // Se a tela foi fechada durante a espera, cancela o resto do código
-    if (!mounted) return;
-    // ==========================================
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Fecha o carregamento
 
-    // Como passamos pela trava, agora é 100% seguro usar o context!
-    Navigator.of(context).pop(); // Fecha o carregamento
-
-    if (perfilLogado != null) {
-      // Navega para a HomePage passando as informações coletadas
-      Navigator.push(
-        context,
-        MaterialPageRoute(
-          builder: (context) => HomePage(
-            perfil: perfilLogado.perfil,
-            nomeUsuario: perfilLogado.nome,
-            emailUsuario: _emailController.text,
+      if (perfilLogado != null) {
+        Navigator.push(
+          context,
+          MaterialPageRoute(
+            builder: (context) => HomePage(
+              perfil: perfilLogado.perfil,
+              nomeUsuario: perfilLogado.nome,
+              emailUsuario: _emailController.text,
+            ),
           ),
-        ),
-      );
-    } else {
-      // Se falhar, mostra o erro na tela
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('E-mail ou senha incorretos.'),
-          backgroundColor: Colors.red,
-        ),
-      );
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('E-mail ou senha incorretos.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
-}
 
-      @override
+  // Nova função para processar o pedido de redefinição
+  void _submitRecuperacao() async {
+    if (_formKey.currentState!.validate()) {
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      final email = _emailRecuperacaoController.text.trim();
+      bool emailExiste = await _authService.verificarSeEmailExiste(email);
+
+      if (!mounted) return;
+      Navigator.of(context).pop(); // Fecha o carregamento
+
+      if (emailExiste) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('E-mail de recuperação enviado para $email com sucesso!'),
+            backgroundColor: Colors.green,
+            duration: const Duration(seconds: 4),
+          ),
+        );
+        
+        _emailRecuperacaoController.clear();
+        setState(() {
+          _modoRecuperacao = false; // Retorna para a tela de login
+        });
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Erro: O e-mail informado não está cadastrado no sistema.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: Colors.white,
@@ -118,12 +153,15 @@ class _LoginPageState extends State<LoginPage> {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [Image.asset('assets/images/logo.png', height: 100),
+                children: [
+                  Image.asset('assets/images/logo.png', height: 100),
                   const SizedBox(height: 16),
-                  const Text(
-                    'Bem-vindo de volta',
+                  
+                  // Título dinâmico baseado no modo atual
+                  Text(
+                    _modoRecuperacao ? 'Recuperar Senha' : 'Bem-vindo de volta',
                     textAlign: TextAlign.center,
-                    style: TextStyle(
+                    style: const TextStyle(
                       fontSize: 24,
                       fontWeight: FontWeight.bold,
                       color: Colors.black87,
@@ -131,88 +169,133 @@ class _LoginPageState extends State<LoginPage> {
                   ),
                   const SizedBox(height: 40),
 
-                  // 2. Campo de Login / Email
-                  TextFormField(
-                    controller: _emailController,
-                    keyboardType: TextInputType.emailAddress,
-                    decoration: const InputDecoration(
-                      labelText: 'E-mail ou Usuário',
-                      prefixIcon: Icon(Icons.person_outline),
+                  // Alternância de layouts usando condicionais de árvore de Widgets do Dart
+                  if (!_modoRecuperacao) ...[
+                    // --- LAYOUT DO LOGIN TRADICIONAL ---
+                    TextFormField(
+                      controller: _emailController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'E-mail ou Usuário',
+                        prefixIcon: Icon(Icons.person_outline),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Por favor, insira seu e-mail ou usuário';
+                        }
+                        return null;
+                      },
                     ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Por favor, insira seu e-mail ou usuário';
-                      }
-                      return null;
-                    },
-                  ),
-                  const SizedBox(height: 16),
-
-                  // 3. Campo de Senha
-                  TextFormField(
-                    controller: _passwordController,
-                    obscureText: _obscurePassword,
-                    decoration: InputDecoration(
-                      labelText: 'Senha',
-                      prefixIcon: const Icon(Icons.lock_outline),
-                      suffixIcon: IconButton(
-                        icon: Icon(
-                          _obscurePassword 
-                              ? Icons.visibility_off 
-                              : Icons.visibility,
+                    const SizedBox(height: 16),
+                    TextFormField(
+                      controller: _passwordController,
+                      obscureText: _obscurePassword,
+                      decoration: InputDecoration(
+                        labelText: 'Senha',
+                        prefixIcon: const Icon(Icons.lock_outline),
+                        suffixIcon: IconButton(
+                          icon: Icon(
+                            _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                          ),
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
                         ),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Por favor, insira sua senha';
+                        }
+                        return null;
+                      },
+                    ),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: TextButton(
                         onPressed: () {
+                          // Altera o estado do formulário para exibir o modo de recuperação
                           setState(() {
-                            _obscurePassword = !_obscurePassword;
+                            _modoRecuperacao = true;
                           });
                         },
+                        child: const Text(
+                          'Esqueceu a senha?',
+                          style: TextStyle(color: Colors.blue, fontWeight: FontWeight.w600),
+                        ),
                       ),
                     ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'Por favor, insira sua senha';
-                      }
-                      if (value.length < 8) {
-                        return 'A senha deve ter pelo menos 8 caracteres';
-                      }
-                      return null;
-                    },
-                  ),
-                  
-                  // 4. Opção de Recuperar Senha
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: _submitLogin,
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Entrar',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ] else ...[
+                    // --- LAYOUT DE RECUPERAÇÃO DE SENHA ---
+                    const Text(
+                      'Digite seu email para recuperar a senha',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 16, color: Colors.black87, fontWeight: FontWeight.w500),
+                    ),
+                    const SizedBox(height: 20),
+                    TextFormField(
+                      controller: _emailRecuperacaoController,
+                      keyboardType: TextInputType.emailAddress,
+                      decoration: const InputDecoration(
+                        labelText: 'E-mail',
+                        prefixIcon: Icon(Icons.mail_outline),
+                      ),
+                      validator: (value) {
+                        if (value == null || value.isEmpty) {
+                          return 'Por favor, digite o e-mail de cadastro';
+                        }
+                        if (!value.contains('@')) {
+                          return 'Insira um formato de e-mail válido';
+                        }
+                        return null;
+                      },
+                    ),
+                    const SizedBox(height: 24),
+                    ElevatedButton(
+                      onPressed: _submitRecuperacao,
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        backgroundColor: Colors.blue,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                      child: const Text(
+                        'Recuperar Senha',
+                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    TextButton(
                       onPressed: () {
-                        // Navegação para tela de recuperação
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('Ir para Recuperação de Senha')),
-                        );
+                        setState(() {
+                          _modoRecuperacao = false;
+                        });
                       },
                       child: const Text(
-                        'Esqueceu a senha?',
-                        style: TextStyle(color: Colors.blue, fontWeight: FontWeight.w600),
+                        'Voltar para o Login',
+                        style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600),
                       ),
                     ),
-                  ),
-                  const SizedBox(height: 24),
-
-                  // Button de Entrar
-                  ElevatedButton(
-                    onPressed: _submitLogin,
-                    style: ElevatedButton.styleFrom(
-                      padding: const EdgeInsets.symmetric(vertical: 16),
-                      backgroundColor: Colors.blue,
-                      foregroundColor: Colors.white,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
-                    ),
-                    child: const Text(
-                      'Entrar',
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ),
+                  ],
                 ],
               ),
             ),

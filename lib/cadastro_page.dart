@@ -190,7 +190,7 @@ class _CadastroPageState extends State<CadastroPage> {
 
                       // 3. Status (Dropdown)
                       DropdownButtonFormField<PerfilUsuario>(
-                        value: _perfilSelecionado,
+                        initialValue: _perfilSelecionado,
                         decoration: const InputDecoration(
                           labelText: 'Status / Nível de Acesso',
                           prefixIcon: Icon(Icons.admin_panel_settings_outlined),

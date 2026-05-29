@@ -242,9 +242,9 @@ class _PerfilPageState extends State<PerfilPage> {
                                 Container(
                                   padding: const EdgeInsets.all(12),
                                   decoration: BoxDecoration(
-                                    color: Colors.blue.withOpacity(0.05),
+                                    color: Colors.blue.withValues(alpha: 0.05),
                                     borderRadius: BorderRadius.circular(8),
-                                    border: Border.all(color: Colors.blue.withOpacity(0.15)),
+                                    border: Border.all(color: Colors.blue.withValues(alpha: 0.15)),
                                   ),
                                   child: const Column(
                                     crossAxisAlignment: CrossAxisAlignment.start,
