@@ -1,10 +1,10 @@
 // lib/auth_service.dart
-import 'database_helper.dart';
-import 'package:sqflite/sqflite.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'usuario_model.dart';
 
 enum PerfilUsuario { operador, supervisor, admin }
 
-// Classe auxiliar para transportar os dados do banco para as telas
 class UsuarioLogado {
   final String nome;
   final PerfilUsuario perfil;
@@ -12,116 +12,152 @@ class UsuarioLogado {
 }
 
 class AuthService {
-  // LOCAL: lib/auth_service.dart (Dentro da classe AuthService)
-
-Future<bool> verificarSeEmailExiste(String email) async {
-  final db = await _dbHelper.database;
-  final List<Map<String, dynamic>> resultado = await db.query(
-    'usuarios',
-    where: 'email = ?',
-    whereArgs: [email.trim().toLowerCase()],
-  );
-  
-  return resultado.isNotEmpty;
-}
   static final AuthService _instance = AuthService._internal();
   factory AuthService() => _instance;
   AuthService._internal();
 
-  final DatabaseHelper _dbHelper = DatabaseHelper();
+  // --- ATENÇÃO: Instâncias declaradas no escopo correto da classe ---
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // Agora retorna o objeto UsuarioLogado com o Nome Real vindo do SQL
-  Future<UsuarioLogado?> loginLocal(String usuario, String senha) async {
-    await Future.delayed(const Duration(milliseconds: 500));
-    final db = await _dbHelper.database;
+  /// Método utilitário para extrair o domínio corporativo pós-@ de forma higienizada
+  String extrairDominio(String email) {
+    if (!email.contains('@')) return '';
+    return email.trim().toLowerCase().split('@').last;
+  }
 
-    final List<Map<String, dynamic>> resultado = await db.query(
-      'usuarios',
-      where: 'email = ? AND senha = ?',
-      whereArgs: [usuario, senha],
-    );
+  /// 1. Verifica se o e-mail já está cadastrado no Firestore
+  Future<bool> verificarSeEmailExiste(String email) async {
+    try {
+      final resultado = await _firestore
+          .collection('usuarios')
+          .where('email', isEqualTo: email.trim().toLowerCase())
+          .limit(1)
+          .get();
+      return resultado.docs.isNotEmpty;
+    } catch (e) {
+      return false;
+    }
+  }
 
-    if (resultado.isNotEmpty) {
-      String nomeBanco = resultado.first['nome'] as String;
-      String perfilStr = resultado.first['perfil'] as String;
-      
-      return UsuarioLogado(
-        nome: nomeBanco,
-        perfil: PerfilUsuario.values.firstWhere((e) => e.name == perfilStr),
+  /// 2. Realiza o login (Suporta validação via Cache Offline se já logado antes)
+  Future<UsuarioLogado?> loginLocal(String email, String senha) async {
+    try {
+      // 1. Tenta autenticar contra o servidor do Firebase Auth
+      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+        email: email.trim().toLowerCase(),
+        password: senha,
       );
+
+      if (userCredential.user != null) {
+        return await _buscarPerfilDoFirestore(userCredential.user!.uid);
+      }
+    } catch (e) {
+      // --- TRATAMENTO OFFLINE ---
+      if (_auth.currentUser != null && _auth.currentUser!.email == email.trim().toLowerCase()) {
+        return await _buscarPerfilDoFirestore(_auth.currentUser!.uid);
+      }
     }
     return null;
   }
 
-  // Salvando Nome Completo e CPF recebidos da tela de cadastro
-  Future<bool> cadastrarUsuarioNoBanco({
+  /// Método auxiliar interno para buscar o perfil no Firestore (usa cache se offline)
+  Future<UsuarioLogado?> _buscarPerfilDoFirestore(String uid) async {
+    try {
+      DocumentSnapshot doc = await _firestore.collection('usuarios').doc(uid).get();
+
+      if (doc.exists && doc.data() != null) {
+        final usuario = UsuarioModel.fromFirestore(
+          doc.data() as Map<String, dynamic>, 
+          doc.id
+        );
+        return UsuarioLogado(nome: usuario.nome, perfil: usuario.perfil);
+      }
+    } catch (_) {
+      // Falha silenciosa para fallback
+    }
+    return null;
+  }
+
+  /// 3. Cadastra um novo usuário no Firebase Auth e salva o perfil no Firestore
+  Future<bool> cadastrarUsuario({
     required String nome,
     required String cpf,
-    required String email, 
-    required String senha, 
+    required String email,
+    required String senha,
     required PerfilUsuario perfil,
   }) async {
-    final db = await _dbHelper.database;
-
     try {
-      await db.insert(
-        'usuarios',
-        {
-          'nome': nome,
-          'cpf': cpf,
-          'email': email,
-          'senha': senha,
-          'perfil': perfil.name,
-        },
-        conflictAlgorithm: ConflictAlgorithm.fail,
+      String emailTratado = email.trim().toLowerCase();
+      String dominio = extrairDominio(emailTratado);
+
+      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+        email: emailTratado,
+        password: senha,
       );
-      return true;
+
+      if (userCredential.user != null) {
+        UsuarioModel novoUsuario = UsuarioModel(
+          uid: userCredential.user!.uid,
+          nome: nome.trim(),
+          cpf: cpf.trim(),
+          email: emailTratado,
+          perfil: perfil,
+          dominioEmpresa: dominio,
+        );
+
+        await _firestore
+            .collection('usuarios')
+            .doc(userCredential.user!.uid)
+            .set(novoUsuario.toMap());
+
+        return true;
+      }
+      return false;
     } catch (e) {
-      return false; 
+      return false;
     }
   }
-// 1. Busca os dados completos do usuário pelo e-mail (ou você pode adaptar para nome/id se preferir)
-Future<Map<String, dynamic>?> buscarDadosUsuario(String email) async {
-  final db = await _dbHelper.database;
-  final List<Map<String, dynamic>> resultado = await db.query(
-    'usuarios',
-    where: 'email = ?',
-    whereArgs: [email],
-  );
-  
-  if (resultado.isNotEmpty) {
-    return resultado.first;
-  }
-  return null;
-}
 
-// 2. Atualiza a senha no banco de dados se a senha atual estiver correta
-Future<bool> atualizarSenha({
-  required String emailUsuario,
-  required String senhaAtual,
-  required String novaSenha,
-}) async {
-  final db = await _dbHelper.database;
+  /// 4. Recupera os dados completos do usuário logado (usado na PerfilPage)
+  Future<Map<String, dynamic>?> buscarDadosUsuario(String email) async {
+    try {
+      final resultado = await _firestore
+          .collection('usuarios')
+          .where('email', isEqualTo: email.trim().toLowerCase())
+          .limit(1)
+          .get();
 
-  // Primeiro, valida se a senha atual está correta no banco
-  final List<Map<String, dynamic>> checagem = await db.query(
-    'usuarios',
-    where: 'email = ? AND senha = ?',
-    whereArgs: [emailUsuario, senhaAtual],
-  );
-
-  if (checagem.isEmpty) {
-    return false; // Senha atual incorreta
+      if (resultado.docs.isNotEmpty) {
+        return resultado.docs.first.data();
+      }
+      return null;
+    } catch (e) {
+      return null;
+    }
   }
 
-  // Se estiver correta, faz o UPDATE para a nova senha
-  await db.update(
-    'usuarios',
-    {'senha': novaSenha},
-    where: 'email = ?',
-    whereArgs: [emailUsuario],
-  );
-  
-  return true;
-}
+  /// 5. Atualiza a senha do usuário logado diretamente na infraestrutura do Firebase
+  Future<bool> atualizarSenha({
+    required String emailUsuario,
+    required String senhaAtual,
+    required String novaSenha,
+  }) async {
+    try {
+      User? usuarioAtual = _auth.currentUser;
+      if (usuarioAtual != null && usuarioAtual.email == emailUsuario) {
+        AuthCredential credential = EmailAuthProvider.credential(
+          email: emailUsuario,
+          password: senhaAtual,
+        );
+        
+        await usuarioAtual.reauthenticateWithCredential(credential);
+        await usuarioAtual.updatePassword(novaSenha);
+        return true;
+      }
+      return false;
+    } catch (e) {
+      return false;
+    }
+  }
 }

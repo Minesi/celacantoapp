@@ -53,7 +53,8 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
 
   // Busca a lista atualizada direto do SQLite para o Dropdown
   Future<void> _carregarTodosUsuarios() async {
-    final usuarios = await _dbHelper.getUsuarios(); // Certifique-se de que este método retorna List<Map<String, dynamic>>
+    final usuarios = await _dbHelper.getUsuarios(); 
+    if (!mounted) return; 
     setState(() {
       _listaUsuariosDB = usuarios;
     });
@@ -80,21 +81,19 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
   // Faz o UPDATE real no arquivo usuarios_teste_v2.db
   Future<void> _salvarAlteracoesNoBanco() async {
     if (_usuarioSelecionado != null) {
-      // Monta o mapa com os dados atualizados das caixas de texto
       Map<String, dynamic> dadosAtualizados = {
-        'id': _usuarioSelecionado!['id'], // Mantém o mesmo ID gerado pelo SQLite
+        'id': _usuarioSelecionado!['id'], 
         'nome': _nomeEditController.text.trim(),
         'cpf': _cpfEditController.text.trim(),
         'email': _emailEditController.text.trim(),
         'senha': _senhaEditController.text.trim(),
-        'perfil': _perfilEditSelecionado!.name, // Salva como String no banco
+        'perfil': _perfilEditSelecionado!.name, 
       };
 
-      // Chama a função de update do seu DatabaseHelper
       await _dbHelper.updateUsuario(dadosAtualizados); 
+      await _carregarTodosUsuarios(); 
       
-      await _carregarTodosUsuarios(); // Recarrega a lista do Dropdown
-      
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Dados atualizados no banco com sucesso!'), backgroundColor: Colors.green),
       );
@@ -106,17 +105,21 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
     if (_usuarioSelecionado != null) {
       int idUsuario = _usuarioSelecionado!['id'];
       
-      // Chama a função de exclusão do seu DatabaseHelper por ID
+      // 1. Executa os processos assíncronos primeiro
       await _dbHelper.deleteUsuario(idUsuario);
+      await _carregarTodosUsuarios(); 
 
+      // 2. Garante que a tela ainda está ativa após TODOS os awaits terminarem
+      if (!mounted) return;
+
+      // 3. Atualiza o estado da tela com segurança
       setState(() {
         _usuarioSelecionado = null;
         _buscaController.clear();
       });
-
-      await _carregarTodosUsuarios(); // Recarrega a lista do Dropdown atualizada
-      Navigator.of(context).pop(); // Fecha o modal de confirmação
-
+      
+      // 4. Executa as chamadas visuais usando o BuildContext de forma 100% segura
+      Navigator.of(context).pop(); 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Usuário removido permanentemente do banco.'), backgroundColor: Colors.redAccent),
       );
@@ -127,10 +130,10 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
   void _mostrarDialogExclusao() {
     showDialog(
       context: context,
-      builder: (BuildContext context) {
+      builder: (BuildContext dialogContext) {
         return AlertDialog(
-          title: Row(
-            children: const [
+          title: const Row(
+            children: [
               Icon(Icons.warning_amber_rounded, color: Colors.red, size: 28),
               SizedBox(width: 8),
               Text('Atenção!'),
@@ -142,7 +145,7 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.of(context).pop(),
+              onPressed: () => Navigator.of(dialogContext).pop(),
               child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
             ),
             ElevatedButton(
@@ -213,7 +216,6 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
                         fillColor: Colors.white,
                       ),
                       onChanged: (text) {
-                        // Busca o usuário na lista carregada do banco se digitar o nome completo correto
                         if (text.isNotEmpty) {
                           try {
                             final correspondencia = _listaUsuariosDB.firstWhere(
@@ -298,7 +300,10 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
                                 
                                 _buildPlanilhaRow(
                                   'PERFIL:',
+                                  // AJUSTE: Trocado 'value' por 'initialValue' e adicionado uma Key dinâmica baseada no usuário selecionado
+                                  // Isso força o Flutter a reconstruir o dropdown corretamente quando o usuário muda na lista.
                                   DropdownButtonFormField<PerfilUsuario>(
+                                    key: ValueKey(_usuarioSelecionado!['id']),
                                     initialValue: _perfilEditSelecionado,
                                     decoration: const InputDecoration(isDense: true, border: InputBorder.none),
                                     items: PerfilUsuario.values.map((PerfilUsuario p) {

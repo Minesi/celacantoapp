@@ -80,13 +80,13 @@ class _CadastroPageState extends State<CadastroPage> {
   void _salvarNovoUsuario() async {
     if (_formKey.currentState!.validate() && _formularioValido) {
       // Aqui você adicionaria no seu AuthService real no futuro
-      bool salvoComSucesso = await _authService.cadastrarUsuarioNoBanco(
-        nome: _nomeController.text,
-        cpf: _cpfController.text,
-        email: _emailController.text,
-        senha: _senhaController.text,
-        perfil: _perfilSelecionado,
-    );
+      bool salvoComSucesso = await _authService.cadastrarUsuario(
+       nome: _nomeController.text,
+       cpf: _cpfController.text,
+       email: _emailController.text,
+       senha: _senhaController.text,
+       perfil: _perfilSelecionado,
+);
       if (!mounted) return;
       if (salvoComSucesso) {
         ScaffoldMessenger.of(context).showSnackBar(

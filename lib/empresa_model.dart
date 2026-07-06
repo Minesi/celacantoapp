@@ -1,31 +1,40 @@
 // lib/empresa_model.dart
 
 class EmpresaModel {
-  final String razaoSocial;
-  final String nomeFantasia;
-  final String cnpj;
+  final String dominio;       // O ID do documento (ex: 'celacanto.com')
+  final String razaoSocial;   // Mantendo sua variável original
+  final String nomeFantasia;  // Mantendo sua variável original
+  final String cnpj;          // Mantendo sua variável original
+  final List<dynamic> projetosModelo; // Novo contêiner para escopos modelo
+  final List<dynamic> projetosFinais; // Novo contêiner para relatórios finais
 
   EmpresaModel({
+    required this.dominio,
     required this.razaoSocial,
     required this.nomeFantasia,
     required this.cnpj,
+    this.projetosModelo = const [],
+    this.projetosFinais = const [],
   });
 
-  // Converte o Objeto para um Mapa (Essencial para salvar em Bancos SQL/NoSQL futuramente)
   Map<String, dynamic> toMap() {
     return {
-      'razao_social': razaoSocial,
-      'nome_fantasia': nomeFantasia,
+      'razaoSocial': razaoSocial,
+      'nomeFantasia': nomeFantasia,
       'cnpj': cnpj,
+      'projetos_modelo': projetosModelo,
+      'projetos_finais': projetosFinais,
     };
   }
 
-  // Cria um Objeto a partir de um Mapa (Essencial para puxar do Banco de Dados)
-  factory EmpresaModel.fromMap(Map<String, dynamic> map) {
+  factory EmpresaModel.fromFirestore(Map<String, dynamic> data, String id) {
     return EmpresaModel(
-      razaoSocial: map['razao_social'] ?? '',
-      nomeFantasia: map['nome_fantasia'] ?? '',
-      cnpj: map['cnpj'] ?? '',
+      dominio: id,
+      razaoSocial: data['razaoSocial'] ?? 'Sem Razão Social',
+      nomeFantasia: data['nomeFantasia'] ?? '',
+      cnpj: data['cnpj'] ?? '',
+      projetosModelo: data['projetos_modelo'] ?? [],
+      projetosFinais: data['projetos_finais'] ?? [],
     );
   }
 }

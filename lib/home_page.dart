@@ -5,8 +5,11 @@ import 'auth_service.dart'; // Importante para reconhecer o PerfilUsuario
 import 'cadastro_page.dart';
 import 'novo_projeto_page.dart';
 import 'perfil_page.dart';
-import 'ocr_scanner_page.dart'; 
+// import 'ocr_scanner_page.dart'; 
 import 'qr_code_scanner_page.dart';
+import 'gestao_ferramentas_page.dart';
+//import 'instrumento_model.dart'; // ADICIONADO: Import do modelo para o mock de teste rápido
+import 'captura_ocr_page.dart'; // Import da nova página de captura OCR (Teste)
 
 class HomePage extends StatelessWidget {
   final PerfilUsuario perfil;
@@ -80,8 +83,9 @@ class HomePage extends StatelessWidget {
                             onPressed: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => const NovoProjetoPage()
-                                )
+                                MaterialPageRoute(builder: (context) => NovoProjetoPage(
+                                  emailLogado: emailUsuario,
+                                )),
                               );
                             },
                           ),
@@ -94,6 +98,24 @@ class HomePage extends StatelessWidget {
                             isEnable: _temAcessoAvancado,
                             onPressed: () {
                               _mostrarAlerta(context, 'Abrindo: Editar Projeto');
+                            },
+                          ),
+                          const SizedBox(height: 12),
+
+                          // Botão: Gestão de Ferramentas (Restrito - Supervisor/Admin)
+                          _buildMenuButton(
+                            label: 'Gestão de Ferramentas',
+                            icon: Icons.construction_outlined, // Ícone seguindo o estilo outline dos demais
+                            isEnable: _temAcessoAvancado,       // Segue a mesma trava de segurança restrita
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => GestaoFerramentasPage(
+                                    emailLogado: emailUsuario,
+                                  ),
+                                ),
+                              );
                             },
                           ),
                           const SizedBox(height: 12),
@@ -238,24 +260,19 @@ class HomePage extends StatelessWidget {
 
   // --- FUNÇÃO ASSÍNCRONA DO QR CODE ---
   Future<void> _abrirLeitorQrCode(BuildContext context) async {
-    // Abre a tela da câmera e aguarda o retorno da String do QR Code
     final String? resultadoQrCode = await Navigator.push<String>(
       context,
       MaterialPageRoute(builder: (context) => const QrCodeScannerPage()),
     );
 
-    // Se o usuário cancelou e voltou sem ler nada, encerra a função
     if (resultadoQrCode == null) return;
-    
-    // Verificação de segurança para o build context em métodos assíncronos
     if (!context.mounted) return;
 
-    // Apresenta a mensagem com o texto que foi lido
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text('QR Code lido com sucesso: $resultadoQrCode'),
         backgroundColor: Colors.blueAccent,
-        duration: const Duration(seconds: 5), // Tempo maior para leitura de texto longo
+        duration: const Duration(seconds: 5),
         action: SnackBarAction(
           label: 'OK',
           textColor: Colors.white,
@@ -265,36 +282,35 @@ class HomePage extends StatelessWidget {
     );
   }
 
-  // --- FUNÇÃO ASSÍNCRONA DO OCR ---
+  // --- FUNÇÃO ASSÍNCRONA DO OCR (CORRIGIDA) ---
   Future<void> _abrirLeitorOcr(BuildContext context) async {
-    // Abre a tela da câmera do OCR e aguarda a String de texto retornar
+//Abre a tela da câmera do OCR de forma limpa (Modo Teste) e aguarda o retorno
     final String? textoDetectado = await Navigator.push<String>(
       context,
-      MaterialPageRoute(builder: (context) => const OcrScannerPage()),
+      MaterialPageRoute(builder: (context) => CapturaOcrPage()),      
     );
-
     // Se cancelou ou voltou sem ler nada, encerra a função
     if (textoDetectado == null) return;
     
     // Verificação de segurança para contextos assíncronos
     if (!context.mounted) return;
 
-    // Apresenta o resultado que o OCR extraiu do display em um diálogo limpo
+    // Apresenta o resultado que o OCR extraiu no display em uma modal da Home
     showDialog(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Row(
             children: [
-              Icon(Icons.document_scanner, color: Colors.blue),
+              Icon(Icons.document_scanner, color: Colors.orange),
               SizedBox(width: 8),
-              Text('Texto Lido via OCR'),
+              Text('Texto Lido via OCR (Teste)'),
             ],
           ),
           content: SingleChildScrollView(
             child: Text(
               textoDetectado,
-              style: const TextStyle(fontSize: 16, fontFamily: 'Courier'), // Fonte estilo display
+              style: const TextStyle(fontSize: 16, fontFamily: 'Courier', fontWeight: FontWeight.bold),
             ),
           ),
           actions: [

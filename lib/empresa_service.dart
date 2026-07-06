@@ -1,42 +1,152 @@
 // lib/empresa_service.dart
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'empresa_model.dart';
+import 'projeto_model.dart';
+import 'instrumento_model.dart';
 
 class EmpresaService {
-  // Singleton para garantir que usemos a mesma instância e os dados não sumam entre telas
-  static final EmpresaService _instance = EmpresaService._internal();
-  factory EmpresaService() => _instance;
-  EmpresaService._internal();
+  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
-  // Nossa tabela simulada do Banco de Dados Local
-  final List<EmpresaModel> _bancoDadosEmpresas = [
-    EmpresaModel(razaoSocial: 'Celacanto Indústria Textil LTDA', nomeFantasia: 'Celacanto Textil', cnpj: '12345678000100'),
-    EmpresaModel(razaoSocial: 'Auto Peças SBC S/A', nomeFantasia: 'SBC Auto', cnpj: '98765432000199'),
-    EmpresaModel(razaoSocial: 'Desenvolvimento de Sistemas Alfa', nomeFantasia: 'Alfa Dev', cnpj: '55555555000155'),
-  ];
-
-  // RETORNA TODAS AS EMPRESAS (Usado no seu Dropdown de cliente existente)
-  Future<List<EmpresaModel>> buscarTodasEmpresas() async {
-    // Simula um pequeno delay de leitura de banco (bom para testar carregamentos futuros)
-    await Future.delayed(const Duration(milliseconds: 300));
-    return _bancoDadosEmpresas;
+  /// Auxiliar para extrair o domínio corporativo pós-@
+  String _extrairDominio(String email) {
+    if (!email.contains('@')) return '';
+    return email.trim().toLowerCase().split('@').last;
   }
 
-  // SALVA UMA NOVA EMPRESA (Usado no Avançar do Novo Cliente)
-  Future<bool> salvarEmpresa(EmpresaModel novaEmpresa) async {
-    await Future.delayed(const Duration(milliseconds: 500)); // Simula o tempo de rede/gravação
-    
-    // Regra de validação: Evitar CNPJ duplicado
-    bool cnpjJaExiste = _bancoDadosEmpresas.any((e) => e.cnpj == novaEmpresa.cnpj);
-    if (cnpjJaExiste) {
-      return false; // Retorna falso se já existir, impedindo o cadastro
-    }
+  // =========================================================================
+  // --- FLUXO DE GERENCIAMENTO DE EMPRESAS ---
+  // =========================================================================
 
-    _bancoDadosEmpresas.add(novaEmpresa);
-    return true; 
-    
-    /* FUTURAMENTE EM NUVEM (Exemplo Supabase):
-    final response = await supabase.from('empresas').insert(novaEmpresa.toMap());
-    return response.error == null;
-    */
+  /// Salva uma nova empresa utilizando o domínio do e-mail como ID do documento
+  Future<bool> salvarNovaEmpresa({
+    required String razaoSocial,
+    required String nomeFantasia,
+    required String cnpj,
+    required String emailResponsavel,
+  }) async {
+    try {
+      String dominio = _extrairDominio(emailResponsavel);
+      if (dominio.isEmpty) return false;
+
+      EmpresaModel novaEmpresa = EmpresaModel(
+        dominio: dominio,
+        razaoSocial: razaoSocial.trim(),
+        nomeFantasia: nomeFantasia.trim(),
+        cnpj: cnpj.trim(),
+        projetosModelo: [],
+        projetosFinais: [],
+      );
+
+      // Salva na nuvem (Se estiver offline, salva no cache local e sincroniza depois)
+      await _firestore
+          .collection('empresas')
+          .doc(dominio)
+          .set(novaEmpresa.toMap());
+
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Recupera todas as empresas cadastradas (Usa cache local automaticamente se offline)
+  Future<List<EmpresaModel>> buscarTodasEmpresas() async {
+    try {
+      final querySnapshot = await _firestore.collection('empresas').get();
+      
+      return querySnapshot.docs.map((doc) {
+        return EmpresaModel.fromFirestore(doc.data(), doc.id);
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  // =========================================================================
+  // --- FLUXO DE GERENCIAMENTO DE FERRAMENTAS/INSTRUMENTOS ---
+  // =========================================================================
+
+  /// Cadastra uma nova ferramenta atrelando-a ao domínio da empresa dona
+  Future<bool> cadastrarNovoInstrumento({
+    required String tipo,
+    required String tag,
+    required String numeroSerie,
+    required String numeroCertificado,
+    required String validade,
+    required String emailUsuario, 
+  }) async {
+    try {
+      String dominio = _extrairDominio(emailUsuario);
+      if (dominio.isEmpty) return false;
+
+      InstrumentoModel novoInstrumento = InstrumentoModel(
+        tipo: tipo.trim(),
+        tag: tag.toUpperCase().trim(),
+        numeroSerie: numeroSerie.trim(),
+        numeroCertificado: numeroCertificado.trim(),
+        validade: validade.trim(),
+        estaValido: true, // Padrão ativo ao cadastrar
+        dominioEmpresa: dominio,
+      );
+
+      // Adiciona um documento com ID aleatório na coleção global 'ferramentas'
+      await _firestore
+          .collection('ferramentas')
+          .add(novoInstrumento.toMap());
+
+      return true;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Busca as ferramentas filtrando apenas pelo domínio da empresa do usuário logado.
+  /// Graças ao motor do Firestore, se o usuário carregar essa lista uma vez com internet,
+  /// ela ficará salva no aparelho e abrirá instantaneamente em campo (Modo Offline).
+  Future<List<InstrumentoModel>> buscarInstrumentosPorEmpresa(String emailUsuario) async {
+    try {
+      String dominio = _extrairDominio(emailUsuario);
+      
+      final querySnapshot = await _firestore
+          .collection('ferramentas')
+          .where('dominio_empresa', isEqualTo: dominio)
+          .get();
+
+      return querySnapshot.docs.map((doc) {
+        return InstrumentoModel.fromFirestore(doc.data(), doc.id);
+      }).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Atualiza o certificado e validade de uma ferramenta pela TAG
+  Future<bool> atualizarCertificadoPorTag({
+    required String tag,
+    required String novoCertificado,
+    required String novaValidade,
+  }) async {
+    try {
+      // Localiza o documento correspondente à TAG digitada/escaneada
+      final query = await _firestore
+          .collection('ferramentas')
+          .where('tag', isEqualTo: tag.toUpperCase().trim())
+          .limit(1)
+          .get();
+
+      if (query.docs.isNotEmpty) {
+        String docId = query.docs.first.id;
+        
+        await _firestore.collection('ferramentas').doc(docId).update({
+          'numeroCertificado': novoCertificado.trim(),
+          'validade': novaValidade.trim(),
+          'estaValido': 1, // Mantém ativo
+        });
+        return true;
+      }
+      return false;
+    } catch (_) {
+      return false;
+    }
   }
 }

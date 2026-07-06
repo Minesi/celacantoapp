@@ -1,57 +1,9 @@
 // lib/qr_code_scanner_page.dart
+import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/material.dart' as flutter_show_hide; // dummy import to keep analyzer happy
-// The `mobile_scanner` package is optional. If it's not available in
-// this project, provide a lightweight fallback so this file still
-// compiles and the page can be used (for example, in debug or tests).
-// If you have `mobile_scanner` as a dependency, remove the fallback
-// below and restore the import above.
-
-// BEGIN FALLBACK (only used when package:mobile_scanner is not present)
-class MobileScannerController {
-  void dispose() {}
-}
-
-class Barcode {
-  final String? rawValue;
-  Barcode(this.rawValue);
-}
-
-class BarcodeCapture {
-  final List<Barcode> barcodes;
-  BarcodeCapture(this.barcodes);
-}
-
-typedef MobileScannerDetectCallback = void Function(BarcodeCapture capture);
-
-class MobileScanner extends StatelessWidget {
-  final MobileScannerController? controller;
-  final MobileScannerDetectCallback? onDetect;
-
-  const MobileScanner({super.key, this.controller, this.onDetect});
-
-  @override
-  Widget build(BuildContext context) {
-    // Simple UI that simulates a QR detection when tapped.
-    return GestureDetector(
-      onTap: () {
-        if (onDetect != null) {
-          onDetect!(BarcodeCapture([Barcode('SAMPLE_QR_CODE')]));
-        }
-      },
-      child: Container(
-        color: Colors.black,
-        child: const Center(
-          child: Text(
-            'Tap to simulate QR scan',
-            style: TextStyle(color: Colors.white),
-          ),
-        ),
-      ),
-    );
-  }
-}
-// END FALLBACK
+import 'package:camera/camera.dart'; // Usado para a webcam no Windows
+import 'package:mobile_scanner/mobile_scanner.dart' as mobile; // Usado para o mobile
 
 class QrCodeScannerPage extends StatefulWidget {
   const QrCodeScannerPage({super.key});
@@ -61,61 +13,250 @@ class QrCodeScannerPage extends StatefulWidget {
 }
 
 class _QrCodeScannerPageState extends State<QrCodeScannerPage> {
-  // Controlador para gerenciar o ciclo de vida da câmera
-  final MobileScannerController _controller = MobileScannerController();
-  bool _jaEscaneou = false; // Evita ler o mesmo código múltiplas vezes seguidas
+  // Controle para Mobile (Android/iOS)
+  mobile.MobileScannerController? _mobileController;
+
+  // Controle para Desktop (Windows)
+  CameraController? _windowsCameraController;
+  
+  bool _jaEscaneou = false;
+  bool _mostrarDigitacaoManual = false;
+  bool _erroNoHardwareDaCamera = false; 
+  final TextEditingController _manualController = TextEditingController();
+
+  // Identifica se estamos rodando nativamente no Windows Desktop
+  bool get _isWindows => !kIsWeb && Platform.isWindows;
+
+  @override
+  void initState() {
+    super.initState();
+    _inicializarCameraCerta();
+  }
+
+  Future<void> _inicializarCameraCerta() async {
+    if (_isWindows) {
+      // Caminho Windows: Inicializa a Webcam usando o pacote 'camera' padrão
+      try {
+        final cameras = await availableCameras();
+        if (cameras.isNotEmpty) {
+          _windowsCameraController = CameraController(
+            cameras.first,
+            ResolutionPreset.medium,
+            enableAudio: false,
+          );
+          await _windowsCameraController!.initialize();
+          if (mounted) setState(() {});
+        } else {
+          _marcarErroCamera();
+        }
+      } catch (e) {
+        _marcarErroCamera();
+      }
+    } else {
+      // Caminho Mobile: Inicializa o MobileScanner
+      try {
+        _mobileController = mobile.MobileScannerController();
+      } catch (e) {
+        _marcarErroCamera();
+      }
+    }
+  }
+
+  void _marcarErroCamera() {
+    if (mounted) {
+      setState(() {
+        _erroNoHardwareDaCamera = true;
+        _mostrarDigitacaoManual = true;
+      });
+    }
+  }
 
   @override
   void dispose() {
-    _controller.dispose(); // Libera a câmera quando a tela fechar
+    // Libera os recursos de acordo com a plataforma ativa
+    if (_isWindows) {
+      _windowsCameraController?.dispose();
+    } else {
+      _mobileController?.dispose();
+    }
+    _manualController.dispose();
     super.dispose();
+  }
+
+  void _retornarCodigo(String codigo) {
+    if (_jaEscaneou) return;
+    setState(() => _jaEscaneou = true);
+    Navigator.pop(context, codigo.trim().toUpperCase());
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[900],
       appBar: AppBar(
-        title: const Text('Escanear QR Code'),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context), // Volta sem dados se cancelar
+        title: Text(_isWindows ? 'Scanner de Ativo (Webcam Windows)' : 'Scanner de Ativo (Mobile)'),
+        actions: [
+          IconButton(
+            icon: Icon(_mostrarDigitacaoManual ? Icons.videocam : Icons.keyboard),
+            tooltip: _mostrarDigitacaoManual ? 'Ativar Câmera' : 'Digitação Manual',
+            onPressed: () {
+              setState(() {
+                _mostrarDigitacaoManual = !_mostrarDigitacaoManual;
+              });
+            },
+          )
+        ],
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: () {
+          setState(() {
+            _mostrarDigitacaoManual = !_mostrarDigitacaoManual;
+          });
+        },
+        backgroundColor: _mostrarDigitacaoManual ? Colors.green : Colors.blue,
+        icon: Icon(_mostrarDigitacaoManual ? Icons.videocam : Icons.edit, color: Colors.white),
+        label: Text(
+          _mostrarDigitacaoManual ? 'Usar Câmera / Webcam' : 'Digitar Código Manual',
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
         ),
       ),
       body: Stack(
         children: [
-          // Exibe o preview da câmera em tempo real
-          MobileScanner(
-            controller: _controller,
-            onDetect: (capture) {
-              if (_jaEscaneou) return;
-
-              final List<Barcode> barcodes = capture.barcodes;
-              for (final barcode in barcodes) {
-                if (barcode.rawValue != null) {
-                  setState(() {
-                    _jaEscaneou = true;
+          // -------------------------------------------------------------------
+          // FLUXO DE VISUALIZAÇÃO DA CÂMERA (Se o modo manual estiver desligado)
+          // -------------------------------------------------------------------
+          if (!_mostrarDigitacaoManual && !_erroNoHardwareDaCamera) ...[
+            // Cenário A: Windows rodando Webcam Nativa
+            if (_isWindows && _windowsCameraController != null && _windowsCameraController!.value.isInitialized)
+              Positioned.fill(
+                child: AspectRatio(
+                  aspectRatio: _windowsCameraController!.value.aspectRatio,
+                  child: CameraPreview(_windowsCameraController!),
+                ),
+              )
+            // Cenário B: Android/iOS rodando MobileScanner
+            else if (!_isWindows && _mobileController != null)
+              mobile.MobileScanner(
+                controller: _mobileController,
+                errorBuilder: (context, error) {
+                  WidgetsBinding.instance.addPostFrameCallback((_) {
+                    _marcarErroCamera();
                   });
-                  
-                  // Fecha a tela da câmera devolvendo o texto do QR Code
-                  Navigator.pop(context, barcode.rawValue);
-                  break;
-                }
-              }
-            },
-          ),
-          
-          // Uma máscara visual por cima da câmera para guiar o usuário
-          Center(
-            child: Container(
-              width: 250,
-              height: 250,
-              decoration: BoxDecoration(
-                border: Border.all(color: Colors.green, width: 3),
-                borderRadius: BorderRadius.circular(12),
-                color: Colors.transparent,
+                  return const SizedBox.shrink();
+                },
+                onDetect: (capture) {
+                  final List<mobile.Barcode> barcodes = capture.barcodes;
+                  for (final barcode in barcodes) {
+                    if (barcode.rawValue != null) {
+                      _retornarCodigo(barcode.rawValue!);
+                      break;
+                    }
+                  }
+                },
+              )
+            else
+              const Center(child: CircularProgressIndicator(color: Colors.blue)),
+
+            // Máscara guia visual centralizada (Aparece para Windows e Mobile quando a câmera está aberta)
+            Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Container(
+                    width: 260,
+                    height: 260,
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.green, width: 3),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                  ),
+                  if (_isWindows) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(color: Colors.black87, borderRadius: BorderRadius.circular(8)),
+                      child: const Text(
+                        'Modo Windows: Posicione o QR Code ou digite usando o botão abaixo',
+                        style: TextStyle(color: Colors.white, fontSize: 12),
+                        textAlign: TextAlign.center,
+                      ),
+                    )
+                  ]
+                ],
               ),
             ),
-          ),
+          ],
+
+          // -------------------------------------------------------------------
+          // FLUXO DE DIGITAÇÃO MANUAL (Disponível em ambas as plataformas)
+          // -------------------------------------------------------------------
+          if (_mostrarDigitacaoManual || _erroNoHardwareDaCamera)
+            Padding(
+              padding: const EdgeInsets.all(24.0),
+              child: Center(
+                child: Card(
+                  elevation: 8,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  child: Padding(
+                    padding: const EdgeInsets.all(20.0),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(
+                              _isWindows ? Icons.desktop_windows : Icons.phone_android, 
+                              color: Colors.blue
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _erroNoHardwareDaCamera ? 'Falha na Câmera - Entrada Manual' : 'Digitação Manual do Ativo', 
+                              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'Caso não consiga realizar a leitura pela câmera, insira a TAG/Número de Série do equipamento manualmente para prosseguir.',
+                          style: TextStyle(fontSize: 12, color: Colors.grey),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _manualController,
+                          decoration: const InputDecoration(
+                            labelText: 'Código da TAG / Número de Série',
+                            border: OutlineInputBorder(),
+                            hintText: 'Ex: MAN-011',
+                          ),
+                          textCapitalization: TextCapitalization.characters,
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.end,
+                          children: [
+                            if (!_erroNoHardwareDaCamera)
+                              TextButton(
+                                onPressed: () => setState(() => _mostrarDigitacaoManual = false),
+                                child: const Text('Voltar para Câmera'),
+                              ),
+                            const SizedBox(width: 8),
+                            ElevatedButton(
+                              onPressed: () {
+                                if (_manualController.text.trim().isNotEmpty) {
+                                  _retornarCodigo(_manualController.text);
+                                }
+                              },
+                              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue),
+                              child: const Text('Confirmar Ativo', style: TextStyle(color: Colors.white)),
+                            ),
+                          ],
+                        )
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
         ],
       ),
     );

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "1062587633068",
+    "project_id": "ocrion-eda2a",
+    "storage_bucket": "ocrion-eda2a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:1062587633068:android:be110eef50e67003257e09",
+        "android_client_info": {
+          "package_name": "com.example.celacantoapp"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDSN7NzGj9CVkfJih98YaLaYV0WJnVQd9U"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -17,8 +17,8 @@ class DatabaseHelper {
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
-    // Mantido v2 para garantir que a tabela com CPF e Perfil esteja ativa
-    final path = join(dbPath, 'usuarios_teste_v2.db'); 
+    // Alterado para v5 para forçar a criação da tabela com as colunas da tela (razaoSocial, nomeFantasia)
+    final path = join(dbPath, 'usuarios_teste_v5.db'); 
 
     return await openDatabase(
       path,
@@ -28,6 +28,7 @@ class DatabaseHelper {
   }
 
   Future<void> _onCreate(Database db, int version) async {
+    // 1. Criação da Tabela de Usuários
     await db.execute('''
       CREATE TABLE usuarios (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,7 +40,30 @@ class DatabaseHelper {
       )
     ''');
 
-    // Inserção dos usuários de teste atualizados com Nome e CPF
+    // 2. Criação da Tabela de Instrumentos
+    await db.execute('''
+      CREATE TABLE instrumentos (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tipo TEXT,
+        tag TEXT UNIQUE,
+        numeroSerie TEXT,
+        numeroCertificado TEXT,
+        validade TEXT,
+        estaValido INTEGER
+      )
+    ''');
+
+    // 3. AJUSTADO: Criação da Tabela de Empresas com as variáveis exatas da View
+    await db.execute('''
+      CREATE TABLE empresas (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        razaoSocial TEXT,
+        nomeFantasia TEXT,
+        cnpj TEXT UNIQUE
+      )
+    ''');
+
+    // Inserção dos usuários de teste
     await db.rawInsert(
       "INSERT INTO usuarios (nome, cpf, email, senha, perfil) VALUES ('Operador Padrão', '11122233344', 'operador@empresa.com', '12345678', 'operador')"
     );
@@ -49,36 +73,62 @@ class DatabaseHelper {
     await db.rawInsert(
       "INSERT INTO usuarios (nome, cpf, email, senha, perfil) VALUES ('Administrador Sistema', '99988877766', 'admin@empresa.com', '12345678', 'admin')"
     );
+
+    // Instrumento padrão de teste
+    await db.rawInsert(
+      "INSERT INTO instrumentos (tipo, tag, numeroSerie, numeroCertificado, validade, estaValido) VALUES ('Manômetro Diferencial', 'MAN-011', '140812', '2601-049', '01/2027', 1)"
+    );
   }
 
-  // --- NOVOS MÉTODOS ADICIONADOS PARA SUPORTAR A TELA DE EDIÇÃO ---
+  // --- MÉTODOS GERENCIAIS DE USUÁRIOS ---
+  Future<int> insertUsuario(Map<String, dynamic> usuario) async {
+    final db = await database;
+    return await db.insert('usuarios', usuario, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
 
-  /// Busca todos os usuários cadastrados na tabela
   Future<List<Map<String, dynamic>>> getUsuarios() async {
     final db = await database;
-    // Retorna a lista ordenada por nome para facilitar a visualização no Dropdown
     return await db.query('usuarios', orderBy: 'nome ASC');
   }
 
-  /// Atualiza os dados de um usuário específico utilizando o ID como referência
   Future<int> updateUsuario(Map<String, dynamic> usuario) async {
     final db = await database;
-    return await db.update(
-      'usuarios',
-      usuario,
-      where: 'id = ?',
-      whereArgs: [usuario['id']],
-      conflictAlgorithm: ConflictAlgorithm.replace, // Substitui em caso de conflito de constraints
+    return await db.update('usuarios', usuario, where: 'id = ?', whereArgs: [usuario['id']], conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<int> deleteUsuario(int id) async {
+    final db = await database;
+    return await db.delete('usuarios', where: 'id = ?', whereArgs: [id]);
+  }
+
+  // --- MÉTODOS GERENCIAIS DE INSTRUMENTOS ---
+  Future<int> insertInstrumento(Map<String, dynamic> instrumento) async {
+    final db = await database;
+    return await db.insert('instrumentos', instrumento, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, dynamic>>> getInstrumentos() async {
+    final db = await database;
+    return await db.query('instrumentos', orderBy: 'tag ASC');
+  }
+
+  Future<int> updateInstrumentoPorTag(String tag, Map<String, dynamic> dados) async {
+    final db = await database;
+    return await db.update('instrumentos', dados, where: 'tag = ?', whereArgs: [tag.toUpperCase().trim()]);
+  }
+
+  // --- MÉTODOS GERENCIAIS DE EMPRESAS ---
+  Future<int> insertEmpresa(Map<String, dynamic> empresa) async {
+    final db = await database;
+    return await db.insert(
+      'empresas',
+      empresa,
+      conflictAlgorithm: ConflictAlgorithm.replace,
     );
   }
 
-  /// Remove permanentemente um usuário do banco pelo ID
-  Future<int> deleteUsuario(int id) async {
+  Future<List<Map<String, dynamic>>> getEmpresas() async {
     final db = await database;
-    return await db.delete(
-      'usuarios',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    return await db.query('empresas', orderBy: 'razaoSocial ASC'); // Ordena por Razão Social
   }
 }

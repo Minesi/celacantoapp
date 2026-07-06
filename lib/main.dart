@@ -1,19 +1,75 @@
+// lib/main.dart
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 // Importa o openDatabase global
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'firebase_options.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'auth_service.dart';
 import 'home_page.dart';
 
 final AuthService _authService = AuthService();
 
-void main() {
+void main() async {
+  // CRUCIAL: Garante que os canais de plataforma nativos estejam vinculados ao motor C++
+  // antes de qualquer inicialização ou registro de plugin, sanando o erro de Isolate no Windows.
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+  FirebaseFirestore.instance.settings = const Settings(
+    persistenceEnabled: true, // Garante que os dados fiquem salvos no disco
+    cacheSizeBytes: -1, // Cache sem limite rígido
+  );
   if (!kIsWeb && (Platform.isWindows || Platform.isLinux || Platform.isMacOS)) {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+  // =========================================================================
+  // --- SCRIPT TEMPORÁRIO PARA CRIAR O PRIMEIRO ADMIN (RODE APENAS 1 VEZ) ---
+  // =========================================================================
+  try {
+    final AuthService authService = AuthService();
+    
+    // Altere para o e-mail corporativo e senha que você deseja usar para o Admin
+    String emailAdmin = "admin@suaempresa.com"; 
+    String senhaAdmin = "Admin@1234"; 
+
+    // Verifica se o e-mail já existe para não tentar duplicar a cada reinício
+    bool jaExiste = await authService.verificarSeEmailExiste(emailAdmin);
+    
+    if (!jaExiste) {
+      debugPrint('--- SEED: Criando usuário Administrador Inicial... ---');
+      bool sucesso = await authService.cadastrarUsuario(
+        nome: "Administrador Geral",
+        cpf: "000.000.000-00",
+        email: emailAdmin,
+        senha: senhaAdmin,
+        perfil: PerfilUsuario.admin, // Define o cargo mais alto
+      );
+      
+      if (sucesso) {
+        debugPrint('--- SEED: USUÁRIO ADMIN CRIADO COM SUCESSO! ---');
+      } else {
+        debugPrint('--- SEED: Erro ao registrar credenciais no Firebase. ---');
+      }
+    } else {
+      debugPrint('--- SEED: O usuário Admin já existe na nuvem do Firebase. ---');
+    }
+  } catch (e) {
+    debugPrint('--- SEED ERRO: $e ---');
+    print("ERRO REAL DO FIREBASE: $e"); // <-- Adicione esta linha temporariamente
+      return false;
+  }
+  // =========================================================================
   runApp(const MyApp());
+  await FirebaseFirestore.instance.collection('testes').add({
+  'plataforma': 'Executando com sucesso!',
+  'horario': DateTime.now().toString(),
+});
 }
 
 class MyApp extends StatelessWidget {
