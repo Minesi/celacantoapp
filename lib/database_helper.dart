@@ -1,4 +1,5 @@
 // lib/database_helper.dart
+import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 
@@ -10,23 +11,25 @@ class DatabaseHelper {
   DatabaseHelper._internal();
 
   Future<Database> get database async {
-    if (_database != null) return _database!;
+    if (_database != null) return _database!!;
     _database = await _initDatabase();
     return _database!;
   }
 
   Future<Database> _initDatabase() async {
     final dbPath = await getDatabasesPath();
-    // Alterado para v5 para forçar a criação da tabela com as colunas da tela (razaoSocial, nomeFantasia)
-    final path = join(dbPath, 'usuarios_teste_v5.db'); 
+    // Nome definitivo do banco de dados, sem necessidade de alterar o sufixo no futuro
+    final path = join(dbPath, 'celacanto_local_database.db'); 
 
     return await openDatabase(
       path,
-      version: 1,
+      version: 2, // Incrementado para 2 para suportar a estrutura com 'dominio_empresa'
       onCreate: _onCreate,
+      onUpgrade: _onUpgrade, // Callback definitivo para gerenciar futuras atualizações de tabelas
     );
   }
 
+  // Executado APENAS na primeira vez que o app é instalado/executado no dispositivo
   Future<void> _onCreate(Database db, int version) async {
     // 1. Criação da Tabela de Usuários
     await db.execute('''
@@ -43,41 +46,49 @@ class DatabaseHelper {
     // 2. Criação da Tabela de Instrumentos
     await db.execute('''
       CREATE TABLE instrumentos (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id TEXT PRIMARY KEY,
         tipo TEXT,
         tag TEXT UNIQUE,
         numeroSerie TEXT,
         numeroCertificado TEXT,
         validade TEXT,
-        estaValido INTEGER
+        estaValido INTEGER,
+        dominio_empresa TEXT
       )
     ''');
 
-    // 3. AJUSTADO: Criação da Tabela de Empresas com as variáveis exatas da View
+    // 3. Criação da Tabela de Empresas
     await db.execute('''
       CREATE TABLE empresas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        cnpj TEXT PRIMARY KEY,
         razaoSocial TEXT,
         nomeFantasia TEXT,
-        cnpj TEXT UNIQUE
+        dominio_empresa TEXT
       )
     ''');
+    
+    debugPrint("DATABASE BASE CREATED: Todas as tabelas locais foram criadas na versão $version.");
+  }
 
-    // Inserção dos usuários de teste
-    await db.rawInsert(
-      "INSERT INTO usuarios (nome, cpf, email, senha, perfil) VALUES ('Operador Padrão', '11122233344', 'operador@empresa.com', '12345678', 'operador')"
-    );
-    await db.rawInsert(
-      "INSERT INTO usuarios (nome, cpf, email, senha, perfil) VALUES ('Supervisor Geral', '55566677788', 'supervisor@empresa.com', '12345678', 'supervisor')"
-    );
-    await db.rawInsert(
-      "INSERT INTO usuarios (nome, cpf, email, senha, perfil) VALUES ('Administrador Sistema', '99988877766', 'admin@empresa.com', '12345678', 'admin')"
-    );
+  // Executado AUTOMATICAMENTE se a versão do banco no dispositivo for menor que a definida no código
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    debugPrint("DATABASE UPGRADE: Atualizando banco da versão $oldVersion para $newVersion...");
+    
+    // Se o dispositivo rodava a versão 1 (sem a coluna dominio_empresa na tabela empresas)
+    if (oldVersion < 2) {
+      try {
+        await db.execute('ALTER TABLE empresas ADD COLUMN dominio_empresa TEXT;');
+        debugPrint("MIGRATION SUCCESS: Coluna 'dominio_empresa' injetada na tabela 'empresas'.");
+      } catch (e) {
+        debugPrint("MIGRATION NOTICE: A coluna já existia ou falhou ao injetar: $e");
+      }
+    }
 
-    // Instrumento padrão de teste
-    await db.rawInsert(
-      "INSERT INTO instrumentos (tipo, tag, numeroSerie, numeroCertificado, validade, estaValido) VALUES ('Manômetro Diferencial', 'MAN-011', '140812', '2601-049', '01/2027', 1)"
-    );
+    /* Exemplo de uso para mudanças futuras:
+    if (oldVersion < 3) {
+      await db.execute('ALTER TABLE instrumentos ADD COLUMN modelo TEXT;');
+    }
+    */
   }
 
   // --- MÉTODOS GERENCIAIS DE USUÁRIOS ---
@@ -88,12 +99,31 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> getUsuarios() async {
     final db = await database;
-    return await db.query('usuarios', orderBy: 'nome ASC');
+    return await db.query('usuarios');
+  }
+
+  Future<Map<String, dynamic>?> loginUsuario(String email, String senha) async {
+    final db = await database;
+    final List<Map<String, dynamic>> maps = await db.query(
+      'usuarios',
+      where: 'email = ? AND senha = ?',
+      whereArgs: [email.trim().toLowerCase(), senha],
+    );
+    if (maps.isNotEmpty) {
+      return maps.first;
+    }
+    return null;
   }
 
   Future<int> updateUsuario(Map<String, dynamic> usuario) async {
     final db = await database;
-    return await db.update('usuarios', usuario, where: 'id = ?', whereArgs: [usuario['id']], conflictAlgorithm: ConflictAlgorithm.replace);
+    return await db.update(
+      'usuarios', 
+      usuario, 
+      where: 'id = ?', 
+      whereArgs: [usuario['id']], 
+      conflictAlgorithm: ConflictAlgorithm.replace
+    );
   }
 
   Future<int> deleteUsuario(int id) async {
@@ -114,7 +144,12 @@ class DatabaseHelper {
 
   Future<int> updateInstrumentoPorTag(String tag, Map<String, dynamic> dados) async {
     final db = await database;
-    return await db.update('instrumentos', dados, where: 'tag = ?', whereArgs: [tag.toUpperCase().trim()]);
+    return await db.update(
+      'instrumentos', 
+      dados, 
+      where: 'tag = ?', 
+      whereArgs: [tag.toUpperCase().trim()]
+    );
   }
 
   // --- MÉTODOS GERENCIAIS DE EMPRESAS ---
@@ -129,6 +164,11 @@ class DatabaseHelper {
 
   Future<List<Map<String, dynamic>>> getEmpresas() async {
     final db = await database;
-    return await db.query('empresas', orderBy: 'razaoSocial ASC'); // Ordena por Razão Social
+    return await db.query('empresas', orderBy: 'nomeFantasia ASC');
+  }
+
+  Future<int> deleteEmpresa(String cnpj) async {
+    final db = await database;
+    return await db.delete('empresas', where: 'cnpj = ?', whereArgs: [cnpj]);
   }
 }

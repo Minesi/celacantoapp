@@ -50,7 +50,6 @@ class DefaultFirebaseOptions {
     projectId: 'ocrion-eda2a',
     storageBucket: 'ocrion-eda2a.firebasestorage.app',
   );
-
   static const FirebaseOptions ios = FirebaseOptions(
     apiKey: 'AIzaSyAN8f0ViupqecJYuSYpYPaXrHRdH10Gu9M',
     appId: '1:1062587633068:ios:ee7809943046ec9a257e09',
@@ -59,7 +58,6 @@ class DefaultFirebaseOptions {
     storageBucket: 'ocrion-eda2a.firebasestorage.app',
     iosBundleId: 'com.example.celacantoapp',
   );
-
   static const FirebaseOptions macos = FirebaseOptions(
     apiKey: 'AIzaSyAN8f0ViupqecJYuSYpYPaXrHRdH10Gu9M',
     appId: '1:1062587633068:ios:3c7a6ce3457fd6a0257e09',

@@ -1,12 +1,12 @@
 // lib/empresa_model.dart
 
 class EmpresaModel {
-  final String dominio;       // O ID do documento (ex: 'celacanto.com')
-  final String razaoSocial;   // Mantendo sua variável original
-  final String nomeFantasia;  // Mantendo sua variável original
-  final String cnpj;          // Mantendo sua variável original
-  final List<dynamic> projetosModelo; // Novo contêiner para escopos modelo
-  final List<dynamic> projetosFinais; // Novo contêiner para relatórios finais
+  final String dominio;       // O ID do documento no Firestore (ex: 'celacanto')
+  final String razaoSocial;   // Mapeado de 'razao_social'
+  final String nomeFantasia;  // Mapeado de 'nome_fantasia'
+  final String cnpj;          // Mapeado de 'cnpj'
+  final List<dynamic> projetosModelo; // Contêiner para escopos modelo
+  final List<dynamic> projetosFinais; // Contêiner para relatórios finais
 
   EmpresaModel({
     required this.dominio,
@@ -17,24 +17,39 @@ class EmpresaModel {
     this.projetosFinais = const [],
   });
 
+  /// 1. Converte os dados de forma limpa para salvar no SQLite local (DatabaseHelper)
+  /// Remove listas complexas para evitar o erro de SqfliteFfiException.
   Map<String, dynamic> toMap() {
     return {
+      'cnpj': cnpj,
       'razaoSocial': razaoSocial,
       'nomeFantasia': nomeFantasia,
-      'cnpj': cnpj,
-      'projetos_modelo': projetosModelo,
-      'projetos_finais': projetosFinais,
+      'dominio_empresa': dominio, // Compatível com a sua coluna SQLite v5
     };
   }
 
+  /// 2. Converte os dados mapeando exatamente para a estrutura existente na sua nuvem Firebase
+  Map<String, dynamic> toFirestore() {
+    return {
+      'cnpj': cnpj,
+      'razao_social': razaoSocial,
+      'nome_fantasia': nomeFantasia,
+      'dominio': dominio,
+      'projetosModelo': projetosModelo,
+      'projetosFinais': projetosFinais,
+    };
+  }
+
+  /// 3. Reconstrói o Objeto lendo perfeitamente do Cloud Firestore
+  /// Tratado para suportar tanto snake_case do Firebase quanto chaves vazias com segurança.
   factory EmpresaModel.fromFirestore(Map<String, dynamic> data, String id) {
     return EmpresaModel(
-      dominio: id,
-      razaoSocial: data['razaoSocial'] ?? 'Sem Razão Social',
-      nomeFantasia: data['nomeFantasia'] ?? '',
+      dominio: id, // O ID do documento na coleção (ex: 'celacanto')
+      razaoSocial: data['razao_social'] ?? data['razaoSocial'] ?? 'Sem Razão Social',
+      nomeFantasia: data['nome_fantasia'] ?? data['nomeFantasia'] ?? '',
       cnpj: data['cnpj'] ?? '',
-      projetosModelo: data['projetos_modelo'] ?? [],
-      projetosFinais: data['projetos_finais'] ?? [],
+      projetosModelo: data['projetosModelo'] ?? data['projetos_modelo'] ?? const [],
+      projetosFinais: data['projetosFinais'] ?? data['projetos_finais'] ?? const [],
     );
   }
 }
