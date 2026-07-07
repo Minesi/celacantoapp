@@ -28,48 +28,12 @@ void main() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
-  // =========================================================================
-  // --- SCRIPT TEMPORÁRIO PARA CRIAR O PRIMEIRO ADMIN (RODE APENAS 1 VEZ) ---
-  // =========================================================================
-  try {
-    final AuthService authService = AuthService();
-    
-    // Altere para o e-mail corporativo e senha que você deseja usar para o Admin
-    String emailAdmin = "admin@suaempresa.com"; 
-    String senhaAdmin = "Admin@1234"; 
-
-    // Verifica se o e-mail já existe para não tentar duplicar a cada reinício
-    bool jaExiste = await authService.verificarSeEmailExiste(emailAdmin);
-    
-    if (!jaExiste) {
-      debugPrint('--- SEED: Criando usuário Administrador Inicial... ---');
-      bool sucesso = await authService.cadastrarUsuario(
-        nome: "Administrador Geral",
-        cpf: "000.000.000-00",
-        email: emailAdmin,
-        senha: senhaAdmin,
-        perfil: PerfilUsuario.admin, // Define o cargo mais alto
-      );
-      
-      if (sucesso) {
-        debugPrint('--- SEED: USUÁRIO ADMIN CRIADO COM SUCESSO! ---');
-      } else {
-        debugPrint('--- SEED: Erro ao registrar credenciais no Firebase. ---');
-      }
-    } else {
-      debugPrint('--- SEED: O usuário Admin já existe na nuvem do Firebase. ---');
-    }
-  } catch (e) {
-    debugPrint('--- SEED ERRO: $e ---');
-    print("ERRO REAL DO FIREBASE: $e"); // <-- Adicione esta linha temporariamente
-      return false;
-  }
-  // =========================================================================
+  
   runApp(const MyApp());
   await FirebaseFirestore.instance.collection('testes').add({
-  'plataforma': 'Executando com sucesso!',
-  'horario': DateTime.now().toString(),
-});
+    'plataforma': 'Executando com sucesso!',
+    'horario': DateTime.now().toString(),
+  });
 }
 
 class MyApp extends StatelessWidget {
@@ -157,7 +121,7 @@ class _LoginPageState extends State<LoginPage> {
     }
   }
 
-  // Nova função para processar o pedido de redefinição
+  // Função atualizada para processar o pedido real de redefinição via Firebase Auth
   void _submitRecuperacao() async {
     if (_formKey.currentState!.validate()) {
       showDialog(
@@ -167,15 +131,17 @@ class _LoginPageState extends State<LoginPage> {
       );
 
       final email = _emailRecuperacaoController.text.trim();
-      bool emailExiste = await _authService.verificarSeEmailExiste(email);
+      
+      // Realiza a chamada direta para o envio do e-mail do Firebase Auth
+      bool enviado = await _authService.enviarEmailRecuperacao(email);
 
       if (!mounted) return;
       Navigator.of(context).pop(); // Fecha o carregamento
 
-      if (emailExiste) {
+      if (enviado) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('E-mail de recuperação enviado para $email com sucesso!'),
+            content: Text('E-mail de recuperação enviado para $email com sucesso! Verifique sua caixa de entrada.'),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 4),
           ),
@@ -183,12 +149,12 @@ class _LoginPageState extends State<LoginPage> {
         
         _emailRecuperacaoController.clear();
         setState(() {
-          _modoRecuperacao = false; // Retorna para a tela de login
+          _modoRecuperacao = false; // Retorna automaticamente para a tela de login
         });
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Erro: O e-mail informado não está cadastrado no sistema.'),
+            content: Text('Erro: Não foi possível enviar o e-mail. Verifique se o e-mail está cadastrado e correto.'),
             backgroundColor: Colors.red,
           ),
         );

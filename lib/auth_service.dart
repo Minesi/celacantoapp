@@ -160,4 +160,16 @@ class AuthService {
       return false;
     }
   }
+  /// 6. Envia um e-mail de recuperação/redefinição de senha do Firebase Auth
+  Future<bool> enviarEmailRecuperacao(String email) async {
+    try {
+      await _auth.sendPasswordResetEmail(
+        email: email.trim().toLowerCase(),
+      );
+      return true; // E-mail enviado com sucesso
+    } catch (e) {
+      // Você pode tratar erros específicos aqui se quiser (ex: usuário não encontrado)
+      return false;
+    }
+  }
 }

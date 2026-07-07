@@ -1,7 +1,8 @@
 // lib/cadastro_page.dart
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'auth_service.dart'; // Importante para o PerfilUsuario
+import 'auth_service.dart'; 
+import 'usuario_model.dart'; // Importação do modelo estruturado do Firestore
 
 class CadastroPage extends StatefulWidget {
   final PerfilUsuario perfilLogado;
@@ -41,7 +42,20 @@ class _CadastroPageState extends State<CadastroPage> {
   @override
   void initState() {
     super.initState();
-    // Escuta as mudanças nos campos de senha para atualizar a validação visual
+    // --- RESTRIÇÃO DE SEGURANÇA CRÍTICA ---
+    // Impede que operadores acessem ou permaneçam nesta tela.
+    if (widget.perfilLogado == PerfilUsuario.operador) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Acesso negado: Operadores não têm permissão para cadastrar usuários.'),
+            backgroundColor: Colors.red,
+          ),
+        );
+        Navigator.of(context).pop(); // Expulsa o usuário de volta para a tela anterior
+      });
+    }
+
     _senhaController.addListener(_validarSenha);
     _confirmaSenhaController.addListener(_validarSenha);
   }
@@ -56,7 +70,6 @@ class _CadastroPageState extends State<CadastroPage> {
     super.dispose();
   }
 
-  // Função que roda a cada letra digitada na senha
   void _validarSenha() {
     final senha = _senhaController.text;
     final confirma = _confirmaSenhaController.text;
@@ -65,241 +78,224 @@ class _CadastroPageState extends State<CadastroPage> {
       _temMinimo8 = senha.length >= 8;
       _temMaiuscula = senha.contains(RegExp(r'[A-Z]'));
       _temMinuscula = senha.contains(RegExp(r'[a-z]'));
-      _temEspecial = senha.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'));
+      _temEspecial = senha.contains(RegExp(r'[!@#\$&*~•]'));
       _senhasIguais = senha.isNotEmpty && senha == confirma;
-      
-      // Validação geral rápida para liberar/bloquear o botão
-      _formularioValido = _nomeController.text.isNotEmpty &&
-          _cpfController.text.isNotEmpty &&
-          _emailController.text.contains('@') &&
-          _temMinimo8 && _temMaiuscula && _temMinuscula && _temEspecial &&
-          _senhasIguais;
+
+      _formularioValido = _temMinimo8 && _temMaiuscula && _temMinuscula && _temEspecial && _senhasIguais;
     });
   }
 
-  void _salvarNovoUsuario() async {
+  void _submeterCadastro() async {
     if (_formKey.currentState!.validate() && _formularioValido) {
-      // Aqui você adicionaria no seu AuthService real no futuro
-      bool salvoComSucesso = await _authService.cadastrarUsuario(
-       nome: _nomeController.text,
-       cpf: _cpfController.text,
-       email: _emailController.text,
-       senha: _senhaController.text,
-       perfil: _perfilSelecionado,
-);
+      // Exibe indicador visual de carregamento
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => const Center(child: CircularProgressIndicator()),
+      );
+
+      // Executa a criação da conta passando os parâmetros individuais exigidos pelo seu AuthService
+      bool sucesso = await _authService.cadastrarUsuario(
+        nome: _nomeController.text.trim(),
+        cpf: _cpfController.text.trim(),
+        email: _emailController.text.trim(),
+        perfil: _perfilSelecionado,
+        senha: _senhaController.text,
+      );
+
       if (!mounted) return;
-      if (salvoComSucesso) {
+      Navigator.of(context).pop(); // Fecha o modal de progresso
+
+      if (sucesso) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Usuário registrado com sucesso no Banco de Dados!'),
+          SnackBar(
+            content: Text('Usuário ${_nomeController.text} cadastrado com sucesso!'),
             backgroundColor: Colors.green,
           ),
         );
-        Navigator.of(context).pop();
+        
+        // Limpa os campos para um próximo cadastro
+        _nomeController.clear();
+        _cpfController.clear();
+        _emailController.clear();
+        _senhaController.clear();
+        _confirmaSenhaController.clear();
+        setState(() {
+          _perfilSelecionado = PerfilUsuario.operador;
+          _validarSenha();
+        });
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Erro: Este e-mail já está cadastrado.'),
+            content: Text('Erro ao cadastrar. Verifique se o e-mail já está em uso ou as regras de rede.'),
             backgroundColor: Colors.red,
           ),
         );
-        Navigator.of(context).pop(); // Retorna para a Home
       }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    // Se for operador, renderiza um container vazio enquanto o Navigator.pop remove a tela do fluxo
+    if (widget.perfilLogado == PerfilUsuario.operador) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return Scaffold(
-      backgroundColor: Colors.grey[50],
-      body: SafeArea(
-        child: Column(
-          children: [
-            // --- HEADER (Mantendo a identidade visual) ---
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(Icons.business, color: Colors.blue, size: 32),
-                      SizedBox(width: 8),
-                      Text('Empresa', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
-                    ],
-                  ),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('Olá, ${widget.nomeLogado}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
-                      Text('Acesso: ${widget.perfilLogado.name.toUpperCase()}', style: TextStyle(color: Colors.grey[600], fontSize: 12)),
-                    ],
-                  ),
-                ],
+      backgroundColor: Colors.white,
+      appBar: AppBar(
+        title: const Text('Cadastrar Novo Usuário'),
+        backgroundColor: Colors.blue,
+        foregroundColor: Colors.white,
+        elevation: 0,
+      ),
+      body: SingleChildScrollView(
+        padding: const EdgeInsets.all(24.0),
+        child: Form(
+          key: _formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // --- 1. CAMPO NOME ---
+              TextFormField(
+                controller: _nomeController,
+                decoration: const InputDecoration(
+                  labelText: 'Nome Completo',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+                validator: (value) => (value == null || value.isEmpty) ? 'Insira o nome completo' : null,
               ),
-            ),
-            
-            // --- FORMULÁRIO ROLÁVEL ---
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0),
-                child: Form(
-                  key: _formKey,
-                  onChanged: _validarSenha, // Revalida ao digitar em qualquer campo
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Text(
-                        'Cadastrar Novo Usuário',
-                        style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Colors.black87),
-                        textAlign: TextAlign.center,
-                      ),
-                      const SizedBox(height: 24),
+              const SizedBox(height: 16),
 
-                      // 1. Nome Completo
-                      TextFormField(
-                        controller: _nomeController,
-                        decoration: const InputDecoration(
-                          labelText: 'Nome Completo',
-                          helperText: 'Apenas letras são permitidas neste campo.',
-                          prefixIcon: Icon(Icons.person_outline),
-                        ),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.allow(RegExp(r'[a-zA-ZÀ-ÿ\s]')), // Bloqueia números nativamente
-                        ],
-                        validator: (v) => v!.isEmpty ? 'Insira o nome completo' : null,
-                      ),
-                      const SizedBox(height: 16),
+              // --- 2. CAMPO CPF ---
+              TextFormField(
+                controller: _cpfController,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(
+                  labelText: 'CPF',
+                  prefixIcon: Icon(Icons.badge_outlined),
+                ),
+                validator: (value) => (value == null || value.isEmpty) ? 'Insira o CPF' : null,
+              ),
+              const SizedBox(height: 16),
 
-                      // 2. CPF
-                      TextFormField(
-                        controller: _cpfController,
-                        keyboardType: TextInputType.number,
-                        decoration: const InputDecoration(
-                          labelText: 'CPF',
-                          helperText: 'Preencha apenas com números.',
-                          prefixIcon: Icon(Icons.badge_outlined),
-                        ),
-                        inputFormatters: [
-                          FilteringTextInputFormatter.digitsOnly, // Bloqueia letras nativamente
-                          LengthLimitingTextInputFormatter(11),   // Limita ao tamanho do CPF
-                        ],
-                        validator: (v) => v!.length < 11 ? 'Insira um CPF válido (11 dígitos)' : null,
-                      ),
-                      const SizedBox(height: 16),
+              // --- 3. CAMPO EMAIL ---
+              TextFormField(
+                controller: _emailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'E-mail Corporativo',
+                  prefixIcon: Icon(Icons.mail_outline),
+                ),
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Insira o e-mail';
+                  if (!value.contains('@')) return 'Insira um e-mail válido';
+                  return null;
+                },
+              ),
+              const SizedBox(height: 16),
 
-                      // 3. Status (Dropdown)
-                      DropdownButtonFormField<PerfilUsuario>(
-                        initialValue: _perfilSelecionado,
-                        decoration: const InputDecoration(
-                          labelText: 'Status / Nível de Acesso',
-                          prefixIcon: Icon(Icons.admin_panel_settings_outlined),
-                        ),
-                        items: const [
-                          DropdownMenuItem(value: PerfilUsuario.operador, child: Text('Operador')),
-                          DropdownMenuItem(value: PerfilUsuario.supervisor, child: Text('Supervisor')),
-                        ],
-                        onChanged: (PerfilUsuario? novoValor) {
-                          if (novoValor != null) {
-                            setState(() => _perfilSelecionado = novoValor);
-                          }
-                        },
-                      ),
-                      const SizedBox(height: 16),
+              // --- 4. SELEÇÃO DE PERFIL (Dropdown integrado ao Enum) ---
+              DropdownButtonFormField<PerfilUsuario>(
+                value: _perfilSelecionado,
+                decoration: const InputDecoration(
+                  labelText: 'Perfil de Acesso',
+                  prefixIcon: Icon(Icons.admin_panel_settings_outlined),
+                ),
+                items: PerfilUsuario.values.map((PerfilUsuario perfil) {
+                  return DropdownMenuItem<PerfilUsuario>(
+                    value: perfil,
+                    child: Text(perfil.name.toUpperCase()),
+                  );
+                }).toList(),
+                onChanged: (PerfilUsuario? novoPerfil) {
+                  if (novoPerfil != null) {
+                    setState(() {
+                      _perfilSelecionado = novoPerfil;
+                    });
+                  }
+                },
+              ),
+              const SizedBox(height: 24),
 
-                      // 4. E-mail
-                      TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: const InputDecoration(
-                          labelText: 'E-mail',
-                          helperText: 'Necessário para recuperação de senha.',
-                          prefixIcon: Icon(Icons.email_outlined),
-                        ),
-                        validator: (v) {
-                          if (v == null || !v.contains('@') || !v.contains('.')) {
-                            return 'Insira um e-mail válido';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-
-                      // 5. Senha
-                      TextFormField(
-                        controller: _senhaController,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Senha',
-                          prefixIcon: Icon(Icons.lock_outline),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // Indicadores de Senha Segura
-                      Column(
-                        children: [
-                          _buildRequisitoItem('Mínimo de 8 caracteres', _temMinimo8),
-                          _buildRequisitoItem('Pelo menos 1 letra maiúscula', _temMaiuscula),
-                          _buildRequisitoItem('Pelo menos 1 letra minúscula', _temMinuscula),
-                          _buildRequisitoItem('Pelo menos 1 caractere especial (!@#\$...)', _temEspecial),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-
-                      // 6. Confirmação da Senha
-                      TextFormField(
-                        controller: _confirmaSenhaController,
-                        obscureText: true,
-                        decoration: const InputDecoration(
-                          labelText: 'Confirme a Senha',
-                          prefixIcon: Icon(Icons.lock_reset),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // Indicador de senhas idênticas
-                      _buildRequisitoItem(
-                        _senhasIguais ? 'As senhas são idênticas' : 'As senhas precisam ser idênticas',
-                        _senhasIguais,
-                      ),
-                      const SizedBox(height: 32),
-
-                      // 7. Botão Criar Novo Usuário
-                      ElevatedButton(
-                        onPressed: _formularioValido ? _salvarNovoUsuario : null, // Desativa se inválido
-                        style: ElevatedButton.styleFrom(
-                          padding: const EdgeInsets.symmetric(vertical: 16),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        ),
-                        child: const Text('Criar Novo Usuário', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                      ),
-                      const SizedBox(height: 24),
-                    ],
-                  ),
+              // --- 5. CAMPO SENHA ---
+              TextFormField(
+                controller: _senhaController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Senha Inicial',
+                  prefixIcon: Icon(Icons.lock_outline),
                 ),
               ),
-            ),
+              const SizedBox(height: 16),
 
-            // --- 8. BOTÃO RETORNAR (Canto inferior direito) ---
-            Padding(
-              padding: const EdgeInsets.all(16.0),
-              child: Row(
+              // --- 6. CAMPO CONFIRMAR SENHA ---
+              TextFormField(
+                controller: _confirmaSenhaController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Confirmar Senha',
+                  prefixIcon: Icon(Icons.lock_clock_outlined),
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // --- PAINEL DINÂMICO DE REQUISITOS DA SENHA ---
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.grey[50],
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.grey[200]!),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    const Text('A senha deve conter:', style: TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                    const SizedBox(height: 6),
+                    _buildRequisitoItem('No mínimo 8 caracteres', _temMinimo8),
+                    _buildRequisitoItem('Pelo menos uma letra maiúscula', _temMaiuscula),
+                    _buildRequisitoItem('Pelo menos uma letra minúscula', _temMinuscula),
+                    _buildRequisitoItem('Pelo menos um caractere especial (!@#\$&*~)', _temEspecial),
+                    _buildRequisitoItem('As senhas devem ser iguais', _senhasIguais),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 32),
+
+              // --- 7. BOTÃO DE ENVIO ---
+              ElevatedButton(
+                onPressed: _formularioValido ? _submeterCadastro : null,
+                style: ElevatedButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  disabledBackgroundColor: Colors.grey[300],
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                ),
+                child: const Text('Cadastrar Usuário', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              ),
+              const SizedBox(height: 16),
+
+              // --- 8. BOTÃO RETORNAR ---
+              Row(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
                   TextButton.icon(
-                    onPressed: () => Navigator.of(context).pop(), // Voltar para a home
+                    onPressed: () => Navigator.of(context).pop(),
                     icon: const Icon(Icons.arrow_back, size: 16, color: Colors.blue),
                     label: const Text('Retornar', style: TextStyle(color: Colors.blue, fontWeight: FontWeight.bold)),
                   ),
                 ],
-              ),
-            )
-          ],
+              )
+            ],
+          ),
         ),
       ),
     );
   }
 
-  // Widget auxiliar para renderizar as regrinhas com ícone de Certo/Aviso
   Widget _buildRequisitoItem(String texto, bool cumprido) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 2.0),
@@ -316,11 +312,10 @@ class _CadastroPageState extends State<CadastroPage> {
             style: TextStyle(
               fontSize: 12,
               color: cumprido ? Colors.green[700] : Colors.grey[600],
-              fontWeight: cumprido ? FontWeight.bold : FontWeight.normal,
             ),
           ),
         ],
-      ),
+          ),
     );
   }
 }
