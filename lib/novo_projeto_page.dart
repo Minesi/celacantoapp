@@ -177,7 +177,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
       return;
     }
 
-    bool dataValida = _validarDataExpiracao(instrumentoEncontrado.validade);
+    bool dataValida = InstrumentoModel.validadeEhValida(instrumentoEncontrado.validade);
 
     if (dataValida) {
       setState(() {
@@ -188,22 +188,6 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
       );
     } else {
       _solicitarLiberacaoSupervisor(tipoFerramenta, instrumentoEncontrado);
-    }
-  }
-
-  bool _validarDataExpiracao(String validadeStr) {
-    try {
-      final partes = validadeStr.split('/');
-      if (partes.length != 2) return false;
-      final mes = int.parse(partes[0]);
-      final ano = int.parse(partes[1]);
-
-      final agora = DateTime.now();
-      final dataLimite = DateTime(ano, mes + 1, 0, 23, 59, 59);
-
-      return agora.isBefore(dataLimite);
-    } catch (e) {
-      return false;
     }
   }
 
@@ -389,11 +373,26 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
 
       // CORREÇÃO: Sincronização exata com a assinatura real do seu RelatorioService
       final relatorioService = RelatorioService();
+      final templatePath = relatorioService.assetPathParaProjeto(_projetoSelecionado!);
       await relatorioService.gerarRelatorioProjeto(
         projeto: novoProjetoCompletoObjeto,
         nomeEmpresa: _empresaSelecionadaDadosObjeto!.nomeFantasia,
-        assetTemplatePath: 'assets/templates/laudo_base.docx', // Ajuste para o path do seu asset padrão
+        assetTemplatePath: templatePath,
       );
+
+      final projetoMapaLocal = {
+        'id': novoProjetoCompletoObjeto.id,
+        'cnpjEmpresa': novoProjetoCompletoObjeto.cnpjEmpresa,
+        'tipoProjeto': novoProjetoCompletoObjeto.tipoProjeto,
+        'ferramentasRequeridas': novoProjetoCompletoObjeto.ferramentasRequeridas,
+        'ferramentasEscaneadas': novoProjetoCompletoObjeto.ferramentasEscaneadas.map((k, v) => MapEntry(k, v.toMap())),
+        'leiturasOcr': novoProjetoCompletoObjeto.leiturasOcr.map((l) => l.toMap()).toList(),
+        'dataCriacao': DateTime.now().toIso8601String(),
+        'operadorResponsavel': widget.emailLogado,
+        'templateUtilizado': templatePath,
+      };
+
+      await _dbHelper.insertProjeto(projetoMapaLocal);
 
       if (!mounted) return;
       Navigator.of(context).pop(); 

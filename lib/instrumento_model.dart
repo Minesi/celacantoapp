@@ -10,6 +10,23 @@ class InstrumentoModel {
   final bool estaValido;          // Controlado via lógica de banco (Sua variável)
   final String dominioEmpresa;    // Filtro de isolamento organizacional
 
+  static bool validadeEhValida(String validadeStr) {
+    try {
+      final partes = validadeStr.trim().split('/');
+      if (partes.length != 2) return false;
+
+      final mes = int.parse(partes[0]);
+      final ano = int.parse(partes[1]);
+      if (mes < 1 || mes > 12) return false;
+
+      final dataLimite = DateTime(ano, mes + 1, 0, 23, 59, 59);
+      final agora = DateTime.now();
+      return agora.isBefore(dataLimite) || agora.isAtSameMomentAs(dataLimite);
+    } catch (_) {
+      return false;
+    }
+  }
+
   InstrumentoModel({
     this.id = '',
     required this.tipo,

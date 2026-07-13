@@ -49,6 +49,7 @@ class _PerfilPageState extends State<PerfilPage> {
   void _carregarDadosIniciais() async {
     // Busca os dados do utilizador usando o e-mail passado pelo construtor
     final dados = await _authService.buscarDadosUsuario(widget.emailLogado);
+    if (!mounted) return;
     setState(() {
       _dadosUsuario = dados;
       _carregandoDados = false;

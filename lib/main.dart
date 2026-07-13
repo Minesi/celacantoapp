@@ -8,6 +8,7 @@ import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'auth_service.dart';
+import 'database_helper.dart';
 import 'home_page.dart';
 
 final AuthService _authService = AuthService();
@@ -28,6 +29,9 @@ void main() async {
     sqfliteFfiInit();
     databaseFactory = databaseFactoryFfi;
   }
+
+  final dbHelper = DatabaseHelper();
+  await dbHelper.sincronizarProjetosPendentes();
   
   runApp(const MyApp());
   await FirebaseFirestore.instance.collection('testes').add({

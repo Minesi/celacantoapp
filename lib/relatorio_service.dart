@@ -8,7 +8,24 @@ import 'package:archive/archive.dart';
 import 'projeto_model.dart';
 
 class RelatorioService {
-  
+  String assetPathParaProjeto(String tipoProjeto) {
+    final tipoNormalizado = tipoProjeto.trim().toLowerCase();
+
+    if (tipoNormalizado.contains('fluxo')) {
+      return 'assets/templates/fluxo_laminar.docx';
+    }
+    if (tipoNormalizado.contains('ar comprimido')) {
+      return 'assets/templates/modelo_ar_comprimido.docx';
+    }
+    if (tipoNormalizado.contains('cabine')) {
+      return 'assets/templates/modelo_cabine_exaustao.docx';
+    }
+    if (tipoNormalizado.contains('hvac')) {
+      return 'assets/templates/modelo_relatorio_hvac.docx';
+    }
+    return 'assets/templates/modelo_teste.docx';
+  }
+
   /// Injeta os dados consolidados do projeto, instrumentos e OCR dentro do template Word.
   Future<File?> gerarRelatorioProjeto({
     required ProjetoModel projeto,
@@ -89,9 +106,13 @@ class RelatorioService {
       if (listaBytesFinais != null) {
         // 5. Localiza a pasta local segura do dispositivo
         final diretorio = await getApplicationDocumentsDirectory();
+        final subdiretorio = Directory('${diretorio.path}/relatorios');
+        if (!await subdiretorio.exists()) {
+          await subdiretorio.create(recursive: true);
+        }
         
         final nomeArquivoSanitizado = projeto.id.replaceAll(' ', '_');
-        final stringCaminhoFinal = "${diretorio.path}/Relatorio_$nomeArquivoSanitizado.docx";
+        final stringCaminhoFinal = "${subdiretorio.path}/Relatorio_$nomeArquivoSanitizado.docx";
         
         // 6. Grava fisicamente no disco de forma assíncrona
         final arquivoFinal = File(stringCaminhoFinal);

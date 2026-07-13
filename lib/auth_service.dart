@@ -1,6 +1,8 @@
 // lib/auth_service.dart
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/foundation.dart';
+import 'database_helper.dart';
 import 'usuario_model.dart';
 
 enum PerfilUsuario { operador, supervisor, admin }
@@ -79,7 +81,7 @@ class AuthService {
     return null;
   }
 
-  /// 3. Cadastra um novo usuário no Firebase Auth e salva o perfil no Firestore
+  /// 3. Cadastra um novo usuário no Firebase Auth, salva o perfil no Firestore e mantém o registro local
   Future<bool> cadastrarUsuario({
     required String nome,
     required String cpf,
@@ -87,54 +89,89 @@ class AuthService {
     required String senha,
     required PerfilUsuario perfil,
   }) async {
-    try {
-      String emailTratado = email.trim().toLowerCase();
-      String dominio = extrairDominio(emailTratado);
+    final emailTratado = email.trim().toLowerCase();
+    final dominio = extrairDominio(emailTratado);
 
-      UserCredential userCredential = await _auth.createUserWithEmailAndPassword(
+    try {
+      final userCredential = await _auth.createUserWithEmailAndPassword(
         email: emailTratado,
         password: senha,
       );
 
-      if (userCredential.user != null) {
-        UsuarioModel novoUsuario = UsuarioModel(
-          uid: userCredential.user!.uid,
-          nome: nome.trim(),
-          cpf: cpf.trim(),
-          email: emailTratado,
-          perfil: perfil,
-          dominioEmpresa: dominio,
-        );
-
-        await _firestore
-            .collection('usuarios')
-            .doc(userCredential.user!.uid)
-            .set(novoUsuario.toMap());
-
-        return true;
+      if (userCredential.user == null) {
+        return false;
       }
+
+      final novoUsuario = UsuarioModel(
+        uid: userCredential.user!.uid,
+        nome: nome.trim(),
+        cpf: cpf.trim(),
+        email: emailTratado,
+        perfil: perfil,
+        dominioEmpresa: dominio,
+      );
+
+      await _firestore.collection('usuarios').doc(userCredential.user!.uid).set(novoUsuario.toMap());
+
+      final dbHelper = DatabaseHelper();
+      await dbHelper.insertUsuario({
+        'nome': novoUsuario.nome,
+        'cpf': novoUsuario.cpf,
+        'email': novoUsuario.email,
+        'senha': senha,
+        'perfil': novoUsuario.perfil.name,
+        'dominio_empresa': novoUsuario.dominioEmpresa,
+      });
+
+      return true;
+    } on FirebaseAuthException catch (e) {
+      if (e.code == 'email-already-in-use') {
+        return false;
+      }
+      debugPrint('Falha ao criar usuário no Firebase Auth: ${e.code} - ${e.message}');
       return false;
     } catch (e) {
+      debugPrint('Falha ao criar usuário no Firebase Auth: $e');
       return false;
     }
   }
 
   /// 4. Recupera os dados completos do usuário logado (usado na PerfilPage)
   Future<Map<String, dynamic>?> buscarDadosUsuario(String email) async {
+    final emailTratado = email.trim().toLowerCase();
+
     try {
       final resultado = await _firestore
           .collection('usuarios')
-          .where('email', isEqualTo: email.trim().toLowerCase())
+          .where('email', isEqualTo: emailTratado)
           .limit(1)
           .get();
 
       if (resultado.docs.isNotEmpty) {
         return resultado.docs.first.data();
       }
-      return null;
-    } catch (e) {
-      return null;
-    }
+    } catch (_) {}
+
+    try {
+      final dbHelper = DatabaseHelper();
+      final usuariosLocais = await dbHelper.getUsuarios();
+      final usuarioLocal = usuariosLocais.where((u) {
+        final emailBanco = (u['email'] ?? '').toString().toLowerCase();
+        return emailBanco == emailTratado;
+      }).toList();
+
+      if (usuarioLocal.isNotEmpty) {
+        return {
+          'nome': usuarioLocal.first['nome'] ?? '',
+          'cpf': usuarioLocal.first['cpf'] ?? '',
+          'email': usuarioLocal.first['email'] ?? '',
+          'perfil': usuarioLocal.first['perfil'] ?? 'operador',
+          'dominio_empresa': usuarioLocal.first['dominio_empresa'] ?? '',
+        };
+      }
+    } catch (_) {}
+
+    return null;
   }
 
   /// 5. Atualiza a senha do usuário logado diretamente na infraestrutura do Firebase
