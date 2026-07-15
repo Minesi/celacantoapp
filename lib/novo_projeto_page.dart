@@ -151,7 +151,8 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
           numeroSerie: localRes.first['numeroSerie']?.toString() ?? 'S/N',
           numeroCertificado: localRes.first['numeroCertificado']?.toString() ?? 'N/A',
           validade: localRes.first['validade']?.toString() ?? '01/2000',
-          estaValido: true, 
+          // Determina validade sempre comparando com a data atual, não apenas pelo flag salvo
+          estaValido: InstrumentoModel.validadeEhValida(localRes.first['validade']?.toString() ?? ''),
           dominioEmpresa: dominio,
         );
       } else {

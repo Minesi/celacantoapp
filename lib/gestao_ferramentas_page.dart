@@ -67,14 +67,16 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
       final dadosLocais = await _dbHelper.getInstrumentos();
       setState(() {
         _listaFerramentas = dadosLocais.map((map) {
+          final validadeStr = map['validade']?.toString() ?? '';
           return InstrumentoModel(
             id: map['id']?.toString() ?? '',
             tipo: map['tipo']?.toString() ?? '',
             tag: map['tag']?.toString() ?? '',
             numeroSerie: map['numeroSerie']?.toString() ?? '',
             numeroCertificado: map['numeroCertificado']?.toString() ?? '',
-            validade: map['validade']?.toString() ?? '',
-            estaValido: map['estaValido'] == 1,
+            validade: validadeStr,
+            // Calcula validade em tempo de execução comparando com a data atual
+            estaValido: InstrumentoModel.validadeEhValida(validadeStr),
             dominioEmpresa: map['dominio_empresa']?.toString() ?? dominio,
           );
         }).where((element) => element.dominioEmpresa == dominio).toList();
@@ -91,9 +93,23 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
         
         for (final doc in snapshotNuvem.docs) {
           final inst = InstrumentoModel.fromFirestore(doc.data(), doc.id);
-          ferramentasNuvem.add(inst);
-          // Atualiza/Salva no cache local para manter offline sincronizado
-          await _dbHelper.insertInstrumento(inst.toMap());
+          // Recalcula validade a partir da data (evita depender do flag salvo)
+          final validadeOk = InstrumentoModel.validadeEhValida(inst.validade);
+          final instParaExibir = InstrumentoModel(
+            id: inst.id,
+            tipo: inst.tipo,
+            tag: inst.tag,
+            numeroSerie: inst.numeroSerie,
+            numeroCertificado: inst.numeroCertificado,
+            validade: inst.validade,
+            estaValido: validadeOk,
+            dominioEmpresa: inst.dominioEmpresa,
+          );
+          ferramentasNuvem.add(instParaExibir);
+          // Atualiza/Salva no cache local para manter offline sincronizado com o flag recalculado
+          final mapa = instParaExibir.toMap();
+          mapa['estaValido'] = validadeOk ? 1 : 0;
+          await _dbHelper.insertInstrumento(mapa);
         }
 
         setState(() {
@@ -122,7 +138,7 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
       numeroSerie: _serieController.text.trim(),
       numeroCertificado: _certController.text.trim(),
       validade: _validadeController.text.trim(),
-      estaValido: true,
+      estaValido: InstrumentoModel.validadeEhValida(_validadeController.text.trim()),
       dominioEmpresa: dominio,
     );
 
@@ -167,7 +183,7 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
     final dadosAtualizadosSqlite = {
       'numeroCertificado': novoCertificado,
       'validade': novaValidade,
-      'estaValido': 1,
+      'estaValido': InstrumentoModel.validadeEhValida(novaValidade) ? 1 : 0,
     };
 
     // 1. Atualização Local (SQLite)
@@ -176,10 +192,11 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
     if (localResult > 0) {
       try {
         // 2. Atualização na Nuvem (Firestore usando merge para não deletar os outros campos)
+        final bool validadeOk = InstrumentoModel.validadeEhValida(novaValidade);
         await _firestore.collection('instrumentos').doc(tagAlvo).set({
           'numeroCertificado': novoCertificado,
           'validade': novaValidade,
-          'estaValido': 1,
+          'estaValido': validadeOk ? 1 : 0,
         }, SetOptions(merge: true));
       } catch (e) {
         debugPrint("Atualização salva em cache offline: $e");
@@ -349,7 +366,10 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
                       leading: CircleAvatar(backgroundColor: Colors.blue[50], child: Icon(Icons.handyman, color: Colors.blue[800])),
                       title: Text('${f.tag} — ${f.tipo}', style: const TextStyle(fontWeight: FontWeight.bold)),
                       subtitle: Text('Série: ${f.numeroSerie} | Certificado: ${f.numeroCertificado}\nValidade: ${f.validade}', style: const TextStyle(fontSize: 12)),
-                      trailing: Icon(Icons.check_circle, color: f.estaValido ? Colors.green : Colors.grey),
+                      trailing: Icon(
+                        Icons.check_circle,
+                        color: InstrumentoModel.validadeEhValida(f.validade) ? Colors.green : Colors.grey,
+                      ),
                     ),
                   );
                 },

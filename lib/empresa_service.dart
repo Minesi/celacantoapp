@@ -85,7 +85,8 @@ class EmpresaService {
         numeroSerie: numeroSerie.trim(),
         numeroCertificado: numeroCertificado.trim(),
         validade: validade.trim(),
-        estaValido: true, // Padrão ativo ao cadastrar
+        // Determina validade ao cadastrar comparando a data informada com a data atual
+        estaValido: InstrumentoModel.validadeEhValida(validade.trim()),
         dominioEmpresa: dominio,
       );
 
@@ -137,10 +138,11 @@ class EmpresaService {
       if (query.docs.isNotEmpty) {
         String docId = query.docs.first.id;
         
+        final bool validadeOk = InstrumentoModel.validadeEhValida(novaValidade.trim());
         await _firestore.collection('ferramentas').doc(docId).update({
           'numeroCertificado': novoCertificado.trim(),
           'validade': novaValidade.trim(),
-          'estaValido': 1, // Mantém ativo
+          'estaValido': validadeOk ? 1 : 0,
         });
         return true;
       }
