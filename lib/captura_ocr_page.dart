@@ -1,6 +1,4 @@
 // lib/captura_ocr_page.dart
-import 'dart:io';
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart'; // Motor real do OCR
@@ -134,10 +132,11 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> {
       _processarValorCapturado(valorFinalFiltrado);
 
     } catch (e) {
+      debugPrint('Falha no motor OCR: $e');
+      if (!mounted) return;
       setState(() {
         _processandoOcr = false;
       });
-      debugPrint('Falha no motor OCR: $e');
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Falha ao processar imagem. Digite manualmente ou tente novamente.')),
       );
@@ -312,7 +311,7 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> {
                 decoration: BoxDecoration(
                   border: Border.all(color: _processandoOcr ? Colors.amber : Colors.green, width: 3),
                   borderRadius: BorderRadius.circular(12),
-                  color: Colors.black.withOpacity(0.15), // <-- Alterado de backgroundColor para color
+                  color: Colors.black.withValues(alpha: 0.15), // <-- Alterado de backgroundColor para color
                 ),
                 child: Align(
                   alignment: Alignment.topCenter,

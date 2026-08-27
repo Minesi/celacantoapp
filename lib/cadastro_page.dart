@@ -1,8 +1,7 @@
 // lib/cadastro_page.dart
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'auth_service.dart'; 
-import 'usuario_model.dart'; // Importação do modelo estruturado do Firestore
+import 'validadores.dart';
 
 class CadastroPage extends StatefulWidget {
   final PerfilUsuario perfilLogado;
@@ -176,7 +175,11 @@ class _CadastroPageState extends State<CadastroPage> {
                   labelText: 'CPF',
                   prefixIcon: Icon(Icons.badge_outlined),
                 ),
-                validator: (value) => (value == null || value.isEmpty) ? 'Insira o CPF' : null,
+                validator: (value) {
+                  if (value == null || value.isEmpty) return 'Insira o CPF';
+                  if (!validarCpf(value)) return 'CPF inválido';
+                  return null;
+                },
               ),
               const SizedBox(height: 16),
 
@@ -190,7 +193,7 @@ class _CadastroPageState extends State<CadastroPage> {
                 ),
                 validator: (value) {
                   if (value == null || value.isEmpty) return 'Insira o e-mail';
-                  if (!value.contains('@')) return 'Insira um e-mail válido';
+                  if (!validarEmail(value)) return 'Insira um e-mail válido';
                   return null;
                 },
               ),
@@ -198,7 +201,7 @@ class _CadastroPageState extends State<CadastroPage> {
 
               // --- 4. SELEÇÃO DE PERFIL (Dropdown integrado ao Enum) ---
               DropdownButtonFormField<PerfilUsuario>(
-                value: _perfilSelecionado,
+                initialValue: _perfilSelecionado,
                 decoration: const InputDecoration(
                   labelText: 'Perfil de Acesso',
                   prefixIcon: Icon(Icons.admin_panel_settings_outlined),

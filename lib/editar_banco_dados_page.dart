@@ -3,15 +3,21 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'auth_service.dart';
 import 'database_helper.dart';
+import 'empresa_model.dart';
+import 'empresa_service.dart';
+import 'firestore_colecoes.dart';
+import 'usuario_service.dart';
 
 class EditarBancoDadosPage extends StatefulWidget {
   final PerfilUsuario perfilLogado;
   final String nomeLogado;
+  final String emailLogado;
 
   const EditarBancoDadosPage({
     super.key,
     required this.perfilLogado,
     required this.nomeLogado,
+    required this.emailLogado,
   });
 
   @override
@@ -21,6 +27,9 @@ class EditarBancoDadosPage extends StatefulWidget {
 class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
   // Instância do seu gerenciador do banco usuarios_teste_v2.db
   final DatabaseHelper _dbHelper = DatabaseHelper();
+  final AuthService _authService = AuthService();
+  final UsuarioService _usuarioService = UsuarioService();
+  final EmpresaService _empresaService = EmpresaService();
 
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
 
@@ -36,7 +45,6 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
   final TextEditingController _nomeEditController = TextEditingController();
   final TextEditingController _cpfEditController = TextEditingController();
   final TextEditingController _emailEditController = TextEditingController();
-  final TextEditingController _senhaEditController = TextEditingController();
   final TextEditingController _cnpjEditController = TextEditingController();
   final TextEditingController _razaoSocialEditController = TextEditingController();
   final TextEditingController _nomeFantasiaEditController = TextEditingController();
@@ -56,7 +64,6 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
     _nomeEditController.dispose();
     _cpfEditController.dispose();
     _emailEditController.dispose();
-    _senhaEditController.dispose();
     _cnpjEditController.dispose();
     _razaoSocialEditController.dispose();
     _nomeFantasiaEditController.dispose();
@@ -64,9 +71,10 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
     super.dispose();
   }
 
-  // Busca a lista atualizada direto do SQLite para o Dropdown
+  // Busca a lista atualizada (SQLite local + Firestore, filtrada pelo domínio do admin logado)
   Future<void> _carregarTodosUsuarios() async {
-    final usuarios = await _dbHelper.getUsuarios();
+    final dominio = _authService.extrairDominio(widget.emailLogado);
+    final usuarios = await _usuarioService.listarPorDominio(dominio);
     if (!mounted) return;
     setState(() {
       _listaUsuariosDB = usuarios;
@@ -74,7 +82,8 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
   }
 
   Future<void> _carregarTodasEmpresas() async {
-    final empresas = await _dbHelper.getEmpresas();
+    final dominio = _authService.extrairDominio(widget.emailLogado);
+    final empresas = await _empresaService.listarPorDominio(dominio);
     if (!mounted) return;
     setState(() {
       _listaEmpresasDB = empresas;
@@ -88,7 +97,6 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
       _nomeEditController.text = usuario['nome'] ?? '';
       _cpfEditController.text = usuario['cpf'] ?? '';
       _emailEditController.text = usuario['email'] ?? '';
-      _senhaEditController.text = usuario['senha'] ?? '';
       
       // Tratamento para converter a String do banco de volta para o Enum
       _perfilEditSelecionado = PerfilUsuario.values.firstWhere(
@@ -105,26 +113,63 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
       _razaoSocialEditController.text = empresa['razaoSocial']?.toString() ?? '';
       _nomeFantasiaEditController.text = empresa['nomeFantasia']?.toString() ?? '';
       _dominioEditController.text = empresa['dominio_empresa']?.toString() ?? '';
+      _buscaController.text = empresa['nomeFantasia']?.toString() ?? '';
     });
+  }
+
+  // Atalho para selecionar diretamente um registro já carregado, sem precisar digitar o nome
+  Widget _buildDropdownRapido() {
+    final lista = _modoEdicao == 'empresas' ? _listaEmpresasDB : _listaUsuariosDB;
+    if (lista.isEmpty) return const SizedBox.shrink();
+
+    return Container(
+      width: double.infinity,
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey[400]!),
+        borderRadius: BorderRadius.circular(12),
+        color: Colors.white,
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      child: DropdownButtonHideUnderline(
+        child: DropdownButton<Map<String, dynamic>>(
+          isExpanded: true,
+          hint: Text(_modoEdicao == 'empresas' ? 'Selecionar empresa cadastrada' : 'Selecionar usuário cadastrado'),
+          icon: const Icon(Icons.arrow_drop_down),
+          items: lista.map((item) {
+            final rotulo = _modoEdicao == 'empresas'
+                ? (item['nomeFantasia'] ?? '').toString()
+                : (item['nome'] ?? '').toString();
+            return DropdownMenuItem(value: item, child: Text(rotulo));
+          }).toList(),
+          onChanged: (selecionado) {
+            if (selecionado == null) return;
+            if (_modoEdicao == 'empresas') {
+              _carregarEmpresaParaEdicao(selecionado);
+            } else {
+              _carregarDadosParaEdicao(selecionado);
+            }
+          },
+        ),
+      ),
+    );
   }
 
   Future<void> _salvarAlteracoesNoBanco() async {
     if (_modoEdicao == 'empresas' && _empresaSelecionada != null) {
-      final dadosAtualizados = {
-        'cnpj': _cnpjEditController.text.trim(),
-        'razaoSocial': _razaoSocialEditController.text.trim(),
-        'nomeFantasia': _nomeFantasiaEditController.text.trim(),
-        'dominio_empresa': _dominioEditController.text.trim().toLowerCase(),
-      };
+      final empresaEditada = EmpresaModel(
+        cnpj: _cnpjEditController.text.trim(),
+        razaoSocial: _razaoSocialEditController.text.trim(),
+        nomeFantasia: _nomeFantasiaEditController.text.trim(),
+        dominio: _dominioEditController.text.trim().toLowerCase(),
+      );
 
-      await _dbHelper.insertEmpresa(dadosAtualizados);
+      await _dbHelper.insertEmpresa(empresaEditada.toMap());
       await _carregarTodasEmpresas();
-      await _firestore.collection('empresas').doc(_dominioEditController.text.trim().toLowerCase()).set({
-        'cnpj': _cnpjEditController.text.trim(),
-        'razao_social': _razaoSocialEditController.text.trim(),
-        'nome_fantasia': _nomeFantasiaEditController.text.trim(),
-        'dominio': _dominioEditController.text.trim().toLowerCase(),
-      }, SetOptions(merge: true));
+      // toFirestoreParcial() nunca inclui projetosModelo/projetosFinais, então o merge não os apaga
+      await _firestore
+          .collection(FirestoreColecoes.empresas)
+          .doc(empresaEditada.dominio)
+          .set(empresaEditada.toFirestoreParcial(), SetOptions(merge: true));
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -139,7 +184,6 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
         'nome': _nomeEditController.text.trim(),
         'cpf': _cpfEditController.text.trim(),
         'email': _emailEditController.text.trim(),
-        'senha': _senhaEditController.text.trim(),
         'perfil': _perfilEditSelecionado!.name,
       };
 
@@ -319,6 +363,8 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
                   ),
                 ],
               ),
+              const SizedBox(height: 12),
+              _buildDropdownRapido(),
               const SizedBox(height: 24),
 
               Expanded(
@@ -368,8 +414,6 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
               _buildPlanilhaRow('CPF:', TextField(controller: _cpfEditController, decoration: const InputDecoration(isDense: true))),
               const SizedBox(height: 12),
               _buildPlanilhaRow('EMAIL:', TextField(controller: _emailEditController, decoration: const InputDecoration(isDense: true))),
-              const SizedBox(height: 12),
-              _buildPlanilhaRow('SENHA:', TextField(controller: _senhaEditController, decoration: const InputDecoration(isDense: true))),
               const SizedBox(height: 12),
               _buildPlanilhaRow(
                 'PERFIL:',

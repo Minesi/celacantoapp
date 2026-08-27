@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
+import 'firestore_colecoes.dart';
 
 class DatabaseHelper {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
@@ -13,7 +14,7 @@ class DatabaseHelper {
   DatabaseHelper._internal();
 
   Future<Database> get database async {
-    if (_database != null) return _database!!;
+    if (_database != null) return _database!;
     _database = await _initDatabase();
     return _database!;
   }
@@ -25,7 +26,7 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 3, // Incrementado para 3 para suportar a coluna 'dominio_empresa' na tabela de usuários
+      version: 4, // Incrementado para 4 para expurgar senhas em texto puro da coluna 'senha'
       onCreate: _onCreate,
       onUpgrade: _onUpgrade, // Callback definitivo para gerenciar futuras atualizações de tabelas
     );
@@ -130,6 +131,17 @@ class DatabaseHelper {
         debugPrint("MIGRATION NOTICE: Falha ao criar tabela de projetos: $e");
       }
     }
+
+    // A autenticação real sempre foi feita via Firebase Auth; a coluna local 'senha'
+    // era um cache redundante em texto puro. Expurga qualquer valor já armazenado.
+    if (oldVersion < 4) {
+      try {
+        await db.execute("UPDATE usuarios SET senha = NULL;");
+        debugPrint("MIGRATION SUCCESS: Senhas em texto puro removidas da tabela 'usuarios'.");
+      } catch (e) {
+        debugPrint("MIGRATION NOTICE: Falha ao expurgar senhas locais: $e");
+      }
+    }
   }
 
   // --- MÉTODOS GERENCIAIS DE USUÁRIOS ---
@@ -141,19 +153,6 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> getUsuarios() async {
     final db = await database;
     return await db.query('usuarios');
-  }
-
-  Future<Map<String, dynamic>?> loginUsuario(String email, String senha) async {
-    final db = await database;
-    final List<Map<String, dynamic>> maps = await db.query(
-      'usuarios',
-      where: 'email = ? AND senha = ?',
-      whereArgs: [email.trim().toLowerCase(), senha],
-    );
-    if (maps.isNotEmpty) {
-      return maps.first;
-    }
-    return null;
   }
 
   Future<int> updateUsuario(Map<String, dynamic> usuario) async {
@@ -250,7 +249,7 @@ class DatabaseHelper {
           'templateUtilizado': projeto['templateUtilizado'],
         };
 
-        await firestore.collection('projetos').doc(projeto['id'].toString()).set(payload);
+        await firestore.collection(FirestoreColecoes.projetos).doc(projeto['id'].toString()).set(payload);
         await db.update(
           'projetos',
           {'sincronizado': 1},

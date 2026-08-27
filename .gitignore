@@ -43,3 +43,7 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# One-off import script credentials/deps (never commit service account keys)
+scripts/import_ferramentas/serviceAccountKey.json
+scripts/import_ferramentas/node_modules/

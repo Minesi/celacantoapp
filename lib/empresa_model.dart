@@ -40,11 +40,23 @@ class EmpresaModel {
     };
   }
 
+  /// 2b. Igual a toFirestore(), mas sem projetosModelo/projetosFinais — para usar com
+  /// SetOptions(merge: true) em edições, sem sobrescrever as listas já existentes na nuvem.
+  Map<String, dynamic> toFirestoreParcial() {
+    return {
+      'cnpj': cnpj,
+      'razao_social': razaoSocial,
+      'nome_fantasia': nomeFantasia,
+      'dominio': dominio,
+    };
+  }
+
   /// 3. Reconstrói o Objeto lendo perfeitamente do Cloud Firestore
   /// Tratado para suportar tanto snake_case do Firebase quanto chaves vazias com segurança.
   factory EmpresaModel.fromFirestore(Map<String, dynamic> data, String id) {
     return EmpresaModel(
-      dominio: id, // O ID do documento na coleção (ex: 'celacanto')
+      // Lê o campo 'dominio' salvo no documento; cai para o ID apenas se ausente (docs antigos)
+      dominio: data['dominio'] ?? id,
       razaoSocial: data['razao_social'] ?? data['razaoSocial'] ?? 'Sem Razão Social',
       nomeFantasia: data['nome_fantasia'] ?? data['nomeFantasia'] ?? '',
       cnpj: data['cnpj'] ?? '',

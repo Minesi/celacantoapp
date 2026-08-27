@@ -8,6 +8,9 @@ import 'package:archive/archive.dart';
 import 'projeto_model.dart';
 
 class RelatorioService {
+  // Quantidade de slots {VALOR_N}/{EQUIP_VALOR_N} suportados pelos templates Word
+  static const int maxSlotsLeituraTemplate = 10;
+
   String assetPathParaProjeto(String tipoProjeto) {
     final tipoNormalizado = tipoProjeto.trim().toLowerCase();
 
@@ -57,9 +60,9 @@ class RelatorioService {
           String conteudoXml = utf8.decode(dadosArquivo as List<int>);
 
           // Substições de Cabeçalho Geral do Escopo
-          conteudoXml = conteudoXml.replaceAll('{PROJETO}', projeto.tipoProjeto);
-          conteudoXml = conteudoXml.replaceAll('{EMPRESA}', nomeEmpresa);
-          conteudoXml = conteudoXml.replaceAll('{CNPJ}', projeto.cnpjEmpresa);
+          conteudoXml = conteudoXml.replaceAll('{PROJETO}', _escaparXml(projeto.tipoProjeto));
+          conteudoXml = conteudoXml.replaceAll('{EMPRESA}', _escaparXml(nomeEmpresa));
+          conteudoXml = conteudoXml.replaceAll('{CNPJ}', _escaparXml(projeto.cnpjEmpresa));
           conteudoXml = conteudoXml.replaceAll('{DATA_GERACAO}', _obterDataAtualFormatada());
 
           // Substituição Dinâmica de Ativos/Instrumentos Escaneados
@@ -69,23 +72,23 @@ class RelatorioService {
             // Exemplo no Word: {TAG_ANEMÔMETRO}, {CERTIFICADO_MANÔMETRO_DIFERENCIAL}
             final sufixoTag = nomeFerramenta.toUpperCase().replaceAll(' ', '_');
             
-            conteudoXml = conteudoXml.replaceAll('{EQUIPAMENTO_$sufixoTag}', instrumento.tipo);
-            conteudoXml = conteudoXml.replaceAll('{TAG_$sufixoTag}', instrumento.tag);
-            conteudoXml = conteudoXml.replaceAll('{SERIE_$sufixoTag}', instrumento.numeroSerie);
-            conteudoXml = conteudoXml.replaceAll('{CERTIFICADO_$sufixoTag}', instrumento.numeroCertificado);
-            conteudoXml = conteudoXml.replaceAll('{VALIDADE_$sufixoTag}', instrumento.validade);
+            conteudoXml = conteudoXml.replaceAll('{EQUIPAMENTO_$sufixoTag}', _escaparXml(instrumento.tipo));
+            conteudoXml = conteudoXml.replaceAll('{TAG_$sufixoTag}', _escaparXml(instrumento.tag));
+            conteudoXml = conteudoXml.replaceAll('{SERIE_$sufixoTag}', _escaparXml(instrumento.numeroSerie));
+            conteudoXml = conteudoXml.replaceAll('{CERTIFICADO_$sufixoTag}', _escaparXml(instrumento.numeroCertificado));
+            conteudoXml = conteudoXml.replaceAll('{VALIDADE_$sufixoTag}', _escaparXml(instrumento.validade));
           });
 
           // Substituição Dinâmica das Leituras Coletadas via OCR
           // Como as leituras vêm em lista ordenada, substituímos por índices {VALOR_1}, {VALOR_2}, etc.
           for (int i = 0; i < projeto.leiturasOcr.length; i++) {
             final leitura = projeto.leiturasOcr[i];
-            conteudoXml = conteudoXml.replaceAll('{VALOR_${i + 1}}', leitura.valorCapturado);
-            conteudoXml = conteudoXml.replaceAll('{EQUIP_VALOR_${i + 1}}', leitura.equipamento);
+            conteudoXml = conteudoXml.replaceAll('{VALOR_${i + 1}}', _escaparXml(leitura.valorCapturado));
+            conteudoXml = conteudoXml.replaceAll('{EQUIP_VALOR_${i + 1}}', _escaparXml(leitura.equipamento));
           }
 
           // Limpa tags sobressalentes caso o template tenha mais slots de leitura do que o coletado
-          for (int i = projeto.leiturasOcr.length; i < 10; i++) {
+          for (int i = projeto.leiturasOcr.length; i < maxSlotsLeituraTemplate; i++) {
             conteudoXml = conteudoXml.replaceAll('{VALOR_${i + 1}}', '-');
             conteudoXml = conteudoXml.replaceAll('{EQUIP_VALOR_${i + 1}}', '-');
           }
@@ -135,5 +138,15 @@ class RelatorioService {
     final mes = agora.month.toString().padLeft(2, '0');
     final ano = agora.year;
     return "$dia/$mes/$ano";
+  }
+
+  /// Escapa caracteres reservados do XML para não corromper o document.xml do .docx
+  String _escaparXml(String texto) {
+    return texto
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&apos;');
   }
 }

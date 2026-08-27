@@ -5,10 +5,8 @@ import 'auth_service.dart'; // Importante para reconhecer o PerfilUsuario
 import 'cadastro_page.dart';
 import 'novo_projeto_page.dart';
 import 'perfil_page.dart';
-// import 'ocr_scanner_page.dart'; 
 import 'qr_code_scanner_page.dart';
 import 'gestao_ferramentas_page.dart';
-//import 'instrumento_model.dart'; // ADICIONADO: Import do modelo para o mock de teste rápido
 import 'captura_ocr_page.dart'; // Import da nova página de captura OCR (Teste)
 
 class HomePage extends StatelessWidget {
@@ -174,6 +172,7 @@ class HomePage extends StatelessWidget {
                                     builder: (context) => EditarBancoDadosPage(
                                       perfilLogado: perfil,
                                       nomeLogado: nomeUsuario,
+                                      emailLogado: emailUsuario,
                                     ),
                                   ),
                                 );

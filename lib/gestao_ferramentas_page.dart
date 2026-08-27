@@ -1,9 +1,18 @@
 // lib/gestao_ferramentas_page.dart
+import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:csv/csv.dart';
+import 'package:excel/excel.dart' as excel_pkg;
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import 'database_helper.dart';
 import 'auth_service.dart';
+import 'firestore_colecoes.dart';
 import 'instrumento_model.dart';
+import 'instrumento_service.dart';
 
 class GestaoFerramentasPage extends StatefulWidget {
   final String emailLogado;
@@ -21,6 +30,7 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
   final DatabaseHelper _dbHelper = DatabaseHelper();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final AuthService _authService = AuthService();
+  final InstrumentoService _instrumentoService = InstrumentoService();
 
   List<InstrumentoModel> _listaFerramentas = [];
   bool _carregando = true;
@@ -62,65 +72,20 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
     setState(() => _carregando = true);
     final dominio = _authService.extrairDominio(widget.emailLogado);
 
-    try {
-      // 1. Carrega o Cache Local (SQLite) primeiro para resposta visual imediata
-      final dadosLocais = await _dbHelper.getInstrumentos();
-      setState(() {
-        _listaFerramentas = dadosLocais.map((map) {
-          final validadeStr = map['validade']?.toString() ?? '';
-          return InstrumentoModel(
-            id: map['id']?.toString() ?? '',
-            tipo: map['tipo']?.toString() ?? '',
-            tag: map['tag']?.toString() ?? '',
-            numeroSerie: map['numeroSerie']?.toString() ?? '',
-            numeroCertificado: map['numeroCertificado']?.toString() ?? '',
-            validade: validadeStr,
-            // Calcula validade em tempo de execução comparando com a data atual
-            estaValido: InstrumentoModel.validadeEhValida(validadeStr),
-            dominioEmpresa: map['dominio_empresa']?.toString() ?? dominio,
-          );
-        }).where((element) => element.dominioEmpresa == dominio).toList();
-      });
+    final listaFinal = await _instrumentoService.listarPorDominio(
+      dominio,
+      aoCarregarCacheLocal: (listaLocal) {
+        // Resposta visual imediata com o cache local, antes da nuvem responder
+        if (!mounted) return;
+        setState(() => _listaFerramentas = listaLocal);
+      },
+    );
 
-      // 2. Tenta buscar atualizações na nuvem (Firestore) filtrando pelo domínio
-      final snapshotNuvem = await _firestore
-          .collection('instrumentos')
-          .where('dominio_empresa', isEqualTo: dominio)
-          .get();
-
-      if (snapshotNuvem.docs.isNotEmpty) {
-        List<InstrumentoModel> ferramentasNuvem = [];
-        
-        for (final doc in snapshotNuvem.docs) {
-          final inst = InstrumentoModel.fromFirestore(doc.data(), doc.id);
-          // Recalcula validade a partir da data (evita depender do flag salvo)
-          final validadeOk = InstrumentoModel.validadeEhValida(inst.validade);
-          final instParaExibir = InstrumentoModel(
-            id: inst.id,
-            tipo: inst.tipo,
-            tag: inst.tag,
-            numeroSerie: inst.numeroSerie,
-            numeroCertificado: inst.numeroCertificado,
-            validade: inst.validade,
-            estaValido: validadeOk,
-            dominioEmpresa: inst.dominioEmpresa,
-          );
-          ferramentasNuvem.add(instParaExibir);
-          // Atualiza/Salva no cache local para manter offline sincronizado com o flag recalculado
-          final mapa = instParaExibir.toMap();
-          mapa['estaValido'] = validadeOk ? 1 : 0;
-          await _dbHelper.insertInstrumento(mapa);
-        }
-
-        setState(() {
-          _listaFerramentas = ferramentasNuvem;
-        });
-      }
-    } catch (e) {
-      debugPrint("Modo Offline Ativo ou erro de sincronização: $e");
-    } finally {
-      setState(() => _carregando = false);
-    }
+    if (!mounted) return;
+    setState(() {
+      _listaFerramentas = listaFinal;
+      _carregando = false;
+    });
   }
 
   /// Adiciona uma ferramenta localmente e na Nuvem
@@ -148,7 +113,7 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
     if (localResult > 0) {
       try {
         // 2. Sincronização na Nuvem (Firestore)
-        await _firestore.collection('instrumentos').doc(tagFormatada).set(novoInstrumento.toMap());
+        await _firestore.collection(FirestoreColecoes.instrumentos).doc(tagFormatada).set(novoInstrumento.toMap());
       } catch (e) {
         debugPrint("Ferramenta salva offline. Sincronização pendente: $e");
       }
@@ -160,11 +125,194 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
       _certController.clear();
       _validadeController.clear();
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Ativo $tagFormatada cadastrado com sucesso!'), backgroundColor: Colors.green),
       );
       _sincronizarECarregarFerramentas();
     }
+  }
+
+  /// Gera uma planilha .xlsx com os ativos do domínio atual e abre o menu de compartilhamento/salvamento
+  Future<void> _exportarPlanilha() async {
+    try {
+      final workbook = excel_pkg.Excel.createExcel();
+      const nomeAba = 'Ferramentas';
+      final nomeAbaOriginal = workbook.getDefaultSheet();
+      final sheet = workbook[nomeAba];
+      if (nomeAbaOriginal != null && nomeAbaOriginal != nomeAba) {
+        workbook.delete(nomeAbaOriginal);
+      }
+
+      sheet.appendRow([
+        excel_pkg.TextCellValue('TAG'),
+        excel_pkg.TextCellValue('Tipo'),
+        excel_pkg.TextCellValue('Numero de Serie'),
+        excel_pkg.TextCellValue('Numero de Certificado'),
+        excel_pkg.TextCellValue('Validade'),
+      ]);
+
+      for (final f in _listaFerramentas) {
+        sheet.appendRow([
+          excel_pkg.TextCellValue(f.tag),
+          excel_pkg.TextCellValue(f.tipo),
+          excel_pkg.TextCellValue(f.numeroSerie),
+          excel_pkg.TextCellValue(f.numeroCertificado),
+          excel_pkg.TextCellValue(f.validade),
+        ]);
+      }
+
+      final bytes = workbook.encode();
+      if (bytes == null) throw Exception('Falha ao gerar os bytes da planilha.');
+
+      final dominio = _authService.extrairDominio(widget.emailLogado);
+      final dir = await getTemporaryDirectory();
+      final caminho = '${dir.path}/ferramentas_$dominio.xlsx';
+      await File(caminho).writeAsBytes(bytes, flush: true);
+
+      await Share.shareXFiles([XFile(caminho)], text: 'Planilha de ferramentas para atualização');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao exportar planilha: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  /// Normaliza um cabeçalho de coluna (remove acentos/espaços/caixa) para casar com nomes flexíveis
+  String _normalizarCabecalho(String texto) {
+    var s = texto.trim().toLowerCase();
+    const comAcento = 'áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ';
+    const semAcento = 'aaaaeeioooucAAAAEEIOOOUC';
+    for (var i = 0; i < comAcento.length; i++) {
+      s = s.replaceAll(comAcento[i], semAcento[i]);
+    }
+    return s.replaceAll(' ', '');
+  }
+
+  /// Lê um arquivo .xlsx ou .csv e devolve as linhas como texto puro (linha 0 = cabeçalho)
+  List<List<String>> _lerLinhasDaPlanilha(String nomeArquivo, List<int> bytes) {
+    if (nomeArquivo.toLowerCase().endsWith('.csv')) {
+      final texto = utf8.decode(bytes, allowMalformed: true);
+      final linhasCsv = const CsvToListConverter(eol: '\n').convert(texto);
+      return linhasCsv.map((linha) => linha.map((c) => c?.toString().trim() ?? '').toList()).toList();
+    }
+
+    final workbook = excel_pkg.Excel.decodeBytes(bytes);
+    final primeiraAba = workbook.tables.keys.first;
+    final sheet = workbook.tables[primeiraAba]!;
+    return sheet.rows
+        .map((linha) => linha.map((celula) => celula?.value?.toString().trim() ?? '').toList())
+        .toList();
+  }
+
+  /// Importa uma planilha .xlsx/.csv exportada (e editada) pelo usuário, atualizando/criando ativos por TAG
+  Future<void> _importarPlanilha() async {
+    final resultado = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['xlsx', 'csv'],
+      withData: true,
+    );
+    final arquivo = resultado?.files.single;
+    if (arquivo?.bytes == null) return;
+
+    List<List<String>> linhas;
+    try {
+      linhas = _lerLinhasDaPlanilha(arquivo!.name, arquivo.bytes!);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao ler o arquivo: $e'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    if (linhas.isEmpty) return;
+
+    final cabecalho = linhas.first.map(_normalizarCabecalho).toList();
+    final idxTag = cabecalho.indexOf('tag');
+    final idxTipo = cabecalho.indexOf('tipo');
+    final idxSerie = cabecalho.indexWhere((h) => h.contains('serie'));
+    final idxCert = cabecalho.indexWhere((h) => h.contains('certificado'));
+    final idxValidade = cabecalho.indexOf('validade');
+
+    if (idxTag == -1) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Coluna TAG não encontrada na planilha.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    String valorDaColuna(List<String> linha, int idx) => (idx != -1 && idx < linha.length) ? linha[idx].trim() : '';
+
+    final dominio = _authService.extrairDominio(widget.emailLogado);
+    int criados = 0, atualizados = 0, ignorados = 0;
+
+    for (var i = 1; i < linhas.length; i++) {
+      final linha = linhas[i];
+      final tag = valorDaColuna(linha, idxTag).toUpperCase();
+      if (tag.isEmpty) continue;
+
+      final tipo = valorDaColuna(linha, idxTipo);
+      final serie = valorDaColuna(linha, idxSerie);
+      final cert = valorDaColuna(linha, idxCert);
+      final validade = valorDaColuna(linha, idxValidade);
+
+      final existentes = _listaFerramentas.where((f) => f.tag == tag);
+
+      if (existentes.isEmpty) {
+        if (tipo.isEmpty) {
+          ignorados++;
+          continue; // sem tipo não é possível cadastrar um novo ativo
+        }
+        final novo = InstrumentoModel(
+          tipo: tipo,
+          tag: tag,
+          numeroSerie: serie,
+          numeroCertificado: cert,
+          validade: validade,
+          estaValido: InstrumentoModel.validadeEhValida(validade),
+          dominioEmpresa: dominio,
+        );
+        await _dbHelper.insertInstrumento(novo.toMap());
+        try {
+          await _firestore.collection(FirestoreColecoes.instrumentos).doc(tag).set(novo.toMap());
+        } catch (e) {
+          debugPrint('Novo ativo $tag salvo offline: $e');
+        }
+        criados++;
+      } else {
+        final camposAtualizados = <String, dynamic>{};
+        if (tipo.isNotEmpty) camposAtualizados['tipo'] = tipo;
+        if (serie.isNotEmpty) camposAtualizados['numeroSerie'] = serie;
+        if (cert.isNotEmpty) camposAtualizados['numeroCertificado'] = cert;
+        if (validade.isNotEmpty) {
+          camposAtualizados['validade'] = validade;
+          camposAtualizados['estaValido'] = InstrumentoModel.validadeEhValida(validade) ? 1 : 0;
+        }
+        if (camposAtualizados.isEmpty) {
+          ignorados++;
+          continue;
+        }
+
+        await _dbHelper.updateInstrumentoPorTag(tag, camposAtualizados);
+        try {
+          await _firestore.collection(FirestoreColecoes.instrumentos).doc(tag).set(camposAtualizados, SetOptions(merge: true));
+        } catch (e) {
+          debugPrint('Atualização de $tag salva offline: $e');
+        }
+        atualizados++;
+      }
+    }
+
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('Importação concluída: $criados criados, $atualizados atualizados, $ignorados ignorados.'),
+        backgroundColor: Colors.green,
+      ),
+    );
+    _sincronizarECarregarFerramentas();
   }
 
   /// Atualiza o certificado e validade de uma ferramenta existente
@@ -193,7 +341,7 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
       try {
         // 2. Atualização na Nuvem (Firestore usando merge para não deletar os outros campos)
         final bool validadeOk = InstrumentoModel.validadeEhValida(novaValidade);
-        await _firestore.collection('instrumentos').doc(tagAlvo).set({
+        await _firestore.collection(FirestoreColecoes.instrumentos).doc(tagAlvo).set({
           'numeroCertificado': novoCertificado,
           'validade': novaValidade,
           'estaValido': validadeOk ? 1 : 0,
@@ -206,6 +354,7 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
       _novaValidadeController.clear();
       setState(() => _tagSelecionadaParaAtualizar = null);
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Calibração da TAG $tagAlvo atualizada com sucesso!'), backgroundColor: Colors.green),
       );
@@ -230,6 +379,8 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
+                  _buildCardImportExport(),
+                  const SizedBox(height: 24),
                   _buildCardCadastro(),
                   const SizedBox(height: 24),
                   _buildCardAtualizacao(),
@@ -238,6 +389,48 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
                 ],
               ),
             ),
+    );
+  }
+
+  Widget _buildCardImportExport() {
+    return Card(
+      elevation: 3,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(20.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Atualização em Massa via Planilha', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blue[900])),
+            const SizedBox(height: 8),
+            const Text(
+              'Exporte os ativos atuais, edite os dados no Excel e importe novamente para atualizar tudo de uma vez.',
+              style: TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _exportarPlanilha,
+                    icon: const Icon(Icons.file_download),
+                    label: const Text('Exportar Planilha'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _importarPlanilha,
+                    style: ElevatedButton.styleFrom(backgroundColor: Colors.blue[800], foregroundColor: Colors.white),
+                    icon: const Icon(Icons.file_upload),
+                    label: const Text('Importar Planilha'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -311,7 +504,7 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
               Text('Renovação de Calibração / Certificado', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.blue[900])),
               const SizedBox(height: 16),
               DropdownButtonFormField<String>(
-                value: _tagSelecionadaParaAtualizar,
+                initialValue: _tagSelecionadaParaAtualizar,
                 hint: const Text('Selecione a TAG do equipamento'),
                 decoration: const InputDecoration(border: OutlineInputBorder(), prefixIcon: Icon(Icons.tag)),
                 items: _listaFerramentas.map((f) {

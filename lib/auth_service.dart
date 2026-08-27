@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'database_helper.dart';
+import 'firestore_colecoes.dart';
 import 'usuario_model.dart';
 
 enum PerfilUsuario { operador, supervisor, admin }
@@ -32,12 +33,13 @@ class AuthService {
   Future<bool> verificarSeEmailExiste(String email) async {
     try {
       final resultado = await _firestore
-          .collection('usuarios')
+          .collection(FirestoreColecoes.usuarios)
           .where('email', isEqualTo: email.trim().toLowerCase())
           .limit(1)
           .get();
       return resultado.docs.isNotEmpty;
     } catch (e) {
+      debugPrint('Falha ao verificar existência do e-mail: $e');
       return false;
     }
   }
@@ -54,11 +56,17 @@ class AuthService {
       if (userCredential.user != null) {
         return await _buscarPerfilDoFirestore(userCredential.user!.uid);
       }
-    } catch (e) {
+    } on FirebaseAuthException catch (e) {
       // --- TRATAMENTO OFFLINE ---
-      if (_auth.currentUser != null && _auth.currentUser!.email == email.trim().toLowerCase()) {
+      // Só usa a sessão em cache quando o Firebase não pôde nem responder (falha de rede).
+      // Uma rejeição real de credencial (senha errada, conta desabilitada, etc.) nunca cai aqui.
+      final foiFalhaDeRede = e.code == 'network-request-failed' || e.code == 'timeout';
+      if (foiFalhaDeRede && _auth.currentUser != null && _auth.currentUser!.email == email.trim().toLowerCase()) {
         return await _buscarPerfilDoFirestore(_auth.currentUser!.uid);
       }
+      debugPrint('Falha de login: ${e.code} - ${e.message}');
+    } catch (e) {
+      debugPrint('Falha de login (erro inesperado): $e');
     }
     return null;
   }
@@ -66,7 +74,7 @@ class AuthService {
   /// Método auxiliar interno para buscar o perfil no Firestore (usa cache se offline)
   Future<UsuarioLogado?> _buscarPerfilDoFirestore(String uid) async {
     try {
-      DocumentSnapshot doc = await _firestore.collection('usuarios').doc(uid).get();
+      DocumentSnapshot doc = await _firestore.collection(FirestoreColecoes.usuarios).doc(uid).get();
 
       if (doc.exists && doc.data() != null) {
         final usuario = UsuarioModel.fromFirestore(
@@ -75,8 +83,8 @@ class AuthService {
         );
         return UsuarioLogado(nome: usuario.nome, perfil: usuario.perfil);
       }
-    } catch (_) {
-      // Falha silenciosa para fallback
+    } catch (e) {
+      debugPrint('Falha ao buscar perfil no Firestore: $e');
     }
     return null;
   }
@@ -111,14 +119,14 @@ class AuthService {
         dominioEmpresa: dominio,
       );
 
-      await _firestore.collection('usuarios').doc(userCredential.user!.uid).set(novoUsuario.toMap());
+      await _firestore.collection(FirestoreColecoes.usuarios).doc(userCredential.user!.uid).set(novoUsuario.toMap());
 
       final dbHelper = DatabaseHelper();
+      // Autenticação real é feita via Firebase Auth; a senha não é replicada no cache local
       await dbHelper.insertUsuario({
         'nome': novoUsuario.nome,
         'cpf': novoUsuario.cpf,
         'email': novoUsuario.email,
-        'senha': senha,
         'perfil': novoUsuario.perfil.name,
         'dominio_empresa': novoUsuario.dominioEmpresa,
       });
@@ -142,7 +150,7 @@ class AuthService {
 
     try {
       final resultado = await _firestore
-          .collection('usuarios')
+          .collection(FirestoreColecoes.usuarios)
           .where('email', isEqualTo: emailTratado)
           .limit(1)
           .get();
@@ -150,7 +158,9 @@ class AuthService {
       if (resultado.docs.isNotEmpty) {
         return resultado.docs.first.data();
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Falha ao buscar dados do usuário no Firestore: $e');
+    }
 
     try {
       final dbHelper = DatabaseHelper();
@@ -169,7 +179,9 @@ class AuthService {
           'dominio_empresa': usuarioLocal.first['dominio_empresa'] ?? '',
         };
       }
-    } catch (_) {}
+    } catch (e) {
+      debugPrint('Falha ao buscar dados do usuário no cache local: $e');
+    }
 
     return null;
   }
@@ -194,6 +206,7 @@ class AuthService {
       }
       return false;
     } catch (e) {
+      debugPrint('Falha ao atualizar senha: $e');
       return false;
     }
   }
@@ -205,7 +218,7 @@ class AuthService {
       );
       return true; // E-mail enviado com sucesso
     } catch (e) {
-      // Você pode tratar erros específicos aqui se quiser (ex: usuário não encontrado)
+      debugPrint('Falha ao enviar e-mail de recuperação: $e');
       return false;
     }
   }

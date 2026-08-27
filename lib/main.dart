@@ -34,10 +34,6 @@ void main() async {
   await dbHelper.sincronizarProjetosPendentes();
   
   runApp(const MyApp());
-  await FirebaseFirestore.instance.collection('testes').add({
-    'plataforma': 'Executando com sucesso!',
-    'horario': DateTime.now().toString(),
-  });
 }
 
 class MyApp extends StatelessWidget {

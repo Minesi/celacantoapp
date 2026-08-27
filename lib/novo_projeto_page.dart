@@ -1,5 +1,5 @@
 // lib/novo_projeto_page.dart
-import 'dart:io';
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart'; 
 import 'empresa_model.dart';
@@ -7,11 +7,14 @@ import 'empresa_service.dart';
 import 'qr_code_scanner_page.dart'; 
 import 'captura_ocr_page.dart';
 import 'instrumento_model.dart';
+import 'instrumento_service.dart';
 import 'projeto_model.dart';
 import 'leitura_model.dart';
 import 'relatorio_service.dart';
 import 'database_helper.dart';
 import 'auth_service.dart';
+import 'firestore_colecoes.dart';
+import 'validadores.dart';
 
 class NovoProjetoPage extends StatefulWidget {
   final String emailLogado;
@@ -29,9 +32,12 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
   final DatabaseHelper _dbHelper = DatabaseHelper();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final AuthService _authService = AuthService();
+  final InstrumentoService _instrumentoService = InstrumentoService();
+  final EmpresaService _empresaService = EmpresaService();
   
   int _etapaAtual = 1; 
   bool _carregandoEmpresas = true;
+  bool _salvandoProjeto = false;
 
   String _cnpjSelecionadoParaProjeto = '';
   EmpresaModel? _empresaSelecionadaDadosObjeto;
@@ -40,26 +46,26 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
 
   // Definição dos Escopos e Suas Ferramentas Conforme Requisito 8
   final Map<String, List<String>> _escoposETestes = {
-    'Fluxo Laminar': ['Balômetro', 'Manômetro', 'Anemômetro', 'Fotômetro', 'Termohigrometro', 'Decibelímetro', 'Luxímetro'],
+    'Fluxo Laminar': ['Balômetro', 'Manômetro', 'Anemômetro', 'Fotômetro', 'Termohigrômetro', 'Decibelímetro', 'Luxímetro'],
     'Ar Comprimido': ['Ponto de Orvalho', 'Contador de Partículas', 'Amostrador de ar', 'Análises de Óleo e Gases Cromatógrafo', 'Decibelímetro', 'Luxímetro'],
-    'Cabine de Exaustão': ['Termohigrometro', 'Anemômetro', 'Decibelímetro', 'Luxímetro', 'Termoanemômetro'],
-    'HVAC': ['Balômetro', 'Manômetro', 'Anemômetro', 'Fotômetro', 'Termohigrometro', 'Contador de Partículas', 'Decibelímetro', 'Luxímetro'],
+    'Cabine de Exaustão': ['Termohigrômetro', 'Anemômetro', 'Decibelímetro', 'Luxímetro', 'Termoanemômetro'],
+    'HVAC': ['Balômetro', 'Manômetro', 'Anemômetro', 'Fotômetro', 'Termohigrômetro', 'Contador de Partículas', 'Decibelímetro', 'Luxímetro'],
     'Teste': ['Manômetro'],
   };
 
-  // Mapeamento de Prefixos Aceitos por Tipo de Campo (Requisito 1 & 6)
+  // Prefixos conferidos contra a planilha SIVS_PADROES (fonte oficial das TAGs cadastradas)
   final Map<String, String> _prefixosPorTipo = {
-    'Balômetro': 'BAL',
+    'Balômetro': 'BLM',
     'Manômetro': 'MAN',
     'Anemômetro': 'ANE',
     'Fotômetro': 'FOT',
-    'Termohigrometro': 'TER',
+    'Termohigrômetro': 'TRH',
     'Decibelímetro': 'DEC',
     'Luxímetro': 'LUX',
-    'Ponto de Orvalho': 'PNT',
-    'Contador de Partículas': 'PAR',
-    'Amostrador de ar': 'AMO',
-    'Análises de Óleo e Gases Cromatógrafo': 'CRO',
+    'Ponto de Orvalho': 'MPO',
+    'Contador de Partículas': 'COP',
+    'Amostrador de ar': 'AMA',
+    'Análises de Óleo e Gases Cromatógrafo': 'CGS',
     'Termoanemômetro': 'TAN',
   };
 
@@ -96,7 +102,8 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
   Future<void> _carregarEmpresasCadastradas() async {
     setState(() => _carregandoEmpresas = true);
     try {
-      final mapasLocais = await _dbHelper.getEmpresas();
+      final dominio = _authService.extrairDominio(widget.emailLogado);
+      final mapasLocais = await _empresaService.listarPorDominio(dominio);
       
       setState(() {
         // CORREÇÃO: Mapeamento manual para contornar a ausência do EmpresaModel.fromMap
@@ -111,6 +118,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
         _carregandoEmpresas = false;
       });
     } catch (e) {
+      if (!mounted) return;
       setState(() => _carregandoEmpresas = false);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erro ao carregar empresas locais: $e'), backgroundColor: Colors.red),
@@ -134,41 +142,14 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
       builder: (context) => const Center(child: CircularProgressIndicator()),
     );
 
-    InstrumentoModel? instrumentoEncontrado;
+    final dadosUsuario = await _authService.buscarDadosUsuario(widget.emailLogado);
+    final dominio = dadosUsuario?['dominio_empresa'] ?? '';
 
-    try {
-      final db = await _dbHelper.database;
-      final localRes = await db.query('instrumentos', where: 'tag = ?', whereArgs: [tagFormatada], limit: 1);
-
-      if (localRes.isNotEmpty) {
-        final dadosUsuario = await _authService.buscarDadosUsuario(widget.emailLogado);
-        final dominio = dadosUsuario?['dominio_empresa'] ?? '';
-        
-        instrumentoEncontrado = InstrumentoModel(
-          id: localRes.first['id']?.toString() ?? '',
-          tipo: localRes.first['tipo']?.toString() ?? tipoFerramenta,
-          tag: localRes.first['tag']?.toString() ?? tagFormatada,
-          numeroSerie: localRes.first['numeroSerie']?.toString() ?? 'S/N',
-          numeroCertificado: localRes.first['numeroCertificado']?.toString() ?? 'N/A',
-          validade: localRes.first['validade']?.toString() ?? '01/2000',
-          // Determina validade sempre comparando com a data atual, não apenas pelo flag salvo
-          estaValido: InstrumentoModel.validadeEhValida(localRes.first['validade']?.toString() ?? ''),
-          dominioEmpresa: dominio,
-        );
-      } else {
-        final nuvemRes = await _firestore
-            .collection('instrumentos')
-            .where('tag', isEqualTo: tagFormatada)
-            .limit(1)
-            .get();
-
-        if (nuvemRes.docs.isNotEmpty) {
-          instrumentoEncontrado = InstrumentoModel.fromFirestore(nuvemRes.docs.first.data(), nuvemRes.docs.first.id);
-        }
-      }
-    } catch (e) {
-      debugPrint("Erro na varredura dos bancos: $e");
-    }
+    final instrumentoEncontrado = await _instrumentoService.buscarPorTag(
+      tagFormatada,
+      dominioPadrao: dominio,
+      tipoPadrao: tipoFerramenta,
+    );
 
     if (!mounted) return;
     Navigator.of(context).pop(); 
@@ -182,7 +163,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
 
     if (dataValida) {
       setState(() {
-        _ferramentasEscaneadasSucesso[tipoFerramenta] = instrumentoEncontrado!;
+        _ferramentasEscaneadasSucesso[tipoFerramenta] = instrumentoEncontrado;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('$tipoFerramenta ($tagFormatada) validado com sucesso!'), backgroundColor: Colors.green),
@@ -243,7 +224,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
                 Map<String, dynamic>? dadosSup = await _authService.buscarDadosUsuario(emailSupController.text.trim());
                 
                 if (dadosSup != null && (dadosSup['perfil'] == 'supervisor' || dadosSup['perfil'] == 'admin')) {
-                  if (!mounted) return;
+                  if (!context.mounted) return;
                   Navigator.of(context).pop(); 
                   Navigator.of(context).pop(); 
 
@@ -255,7 +236,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
                     SnackBar(content: Text('Uso de ${instrumento.tag} liberado pelo Supervisor!'), backgroundColor: Colors.orange),
                   );
                 } else {
-                  if (!mounted) return;
+                  if (!context.mounted) return;
                   Navigator.of(context).pop(); 
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('Credenciais inválidas ou usuário sem nível de Supervisor!'), backgroundColor: Colors.red),
@@ -268,7 +249,10 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
           ],
         );
       },
-    );
+    ).then((_) {
+      emailSupController.dispose();
+      senhaSupController.dispose();
+    });
   }
 
   void _abrirScannerQrParaFerramenta(String tipoFerramenta) async {
@@ -311,7 +295,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
           ],
         );
       },
-    );
+    ).then((_) => manualController.dispose());
   }
 
   void _dispararLeituraOcrDisplay(String tipoFerramentaVinculada) async {
@@ -332,6 +316,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
           dataHoraCaptura: DateTime.now(),
         ));
       });
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Display de $tipoFerramentaVinculada anexado via OCR!'), backgroundColor: Colors.green),
       );
@@ -339,7 +324,8 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
   }
 
   void _criarProjetoFinal() async {
-    if (_empresaSelecionadaDadosObjeto == null || _projetoSelecionado == null) return;
+    if (_empresaSelecionadaDadosObjeto == null || _projetoSelecionado == null || _salvandoProjeto) return;
+    setState(() => _salvandoProjeto = true);
 
     showDialog(
       context: context,
@@ -370,12 +356,12 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
         'operadorResponsavel': widget.emailLogado,
       };
 
-      await _firestore.collection('projetos').doc(idUnicoProjeto).set(mapaProjeto);
+      await _firestore.collection(FirestoreColecoes.projetos).doc(idUnicoProjeto).set(mapaProjeto);
 
       // CORREÇÃO: Sincronização exata com a assinatura real do seu RelatorioService
       final relatorioService = RelatorioService();
       final templatePath = relatorioService.assetPathParaProjeto(_projetoSelecionado!);
-      await relatorioService.gerarRelatorioProjeto(
+      final arquivoRelatorio = await relatorioService.gerarRelatorioProjeto(
         projeto: novoProjetoCompletoObjeto,
         nomeEmpresa: _empresaSelecionadaDadosObjeto!.nomeFantasia,
         assetTemplatePath: templatePath,
@@ -394,13 +380,25 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
       };
 
       await _dbHelper.insertProjeto(projetoMapaLocal);
+      // Aproveita a conexão ativa para tentar reenviar outros projetos que ficaram pendentes offline
+      unawaited(_dbHelper.sincronizarProjetosPendentes());
 
       if (!mounted) return;
       Navigator.of(context).pop(); 
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Projeto $idUnicoProjeto gerado com sucesso!'), backgroundColor: Colors.green),
-      );
+      if (arquivoRelatorio == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Projeto $idUnicoProjeto salvo, mas o relatório Word não pôde ser gerado. Verifique o template.'), backgroundColor: Colors.orange),
+        );
+      } else if (novoProjetoCompletoObjeto.leiturasOcr.length > RelatorioService.maxSlotsLeituraTemplate) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Projeto $idUnicoProjeto gerado, mas o template só suporta ${RelatorioService.maxSlotsLeituraTemplate} leituras — as excedentes não aparecem no relatório.'), backgroundColor: Colors.orange),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Projeto $idUnicoProjeto gerado com sucesso!'), backgroundColor: Colors.green),
+        );
+      }
 
       Navigator.of(context).pop();
     } catch (e) {
@@ -409,6 +407,8 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Falha ao registrar projeto e gerar Word: $e'), backgroundColor: Colors.red),
       );
+    } finally {
+      if (mounted) setState(() => _salvandoProjeto = false);
     }
   }
 
@@ -432,33 +432,16 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
       dominio: _authService.extrairDominio(widget.emailLogado), 
     );
 
-    // CORREÇÃO: Criamos um mapa limpo apenas com tipos primitivos que o SQLite aceita
-    final mapaSqliteLimpo = {
-      'cnpj': novaEmpresa.cnpj,
-      'razaoSocial': novaEmpresa.razaoSocial,
-      'nomeFantasia': novaEmpresa.nomeFantasia,
-      'dominio_empresa': novaEmpresa.dominio,
-    };
-
     // Salva localmente sem passar listas vazias []
-    int resultadoLocal = await _dbHelper.insertEmpresa(mapaSqliteLimpo);
+    int resultadoLocal = await _dbHelper.insertEmpresa(novaEmpresa.toMap());
 
     if (resultadoLocal > 0) {
       if (!mounted) return;
       Navigator.of(context).pop(); 
 
       try {
-        // Para a nuvem (Firebase), mapeamos exatamente conforme a estrutura existente que você mostrou
-        final mapaFirebase = {
-          'cnpj': novaEmpresa.cnpj,
-          'razao_social': novaEmpresa.razaoSocial,
-          'nome_fantasia': novaEmpresa.nomeFantasia,
-          'dominio': novaEmpresa.dominio,
-          'projetosFinais': [],  // Mantém a lista vazia inicial padrão do seu banco
-          'projetosModelo': [],  // Mantém a lista vazia inicial padrão do seu banco
-        };
-
-        await _firestore.collection('empresas').doc(novaEmpresa.cnpj).set(mapaFirebase);
+        // Doc ID = domínio, consistente com o restante do app (editar_banco_dados_page.dart, etc.)
+        await _firestore.collection(FirestoreColecoes.empresas).doc(novaEmpresa.dominio).set(novaEmpresa.toFirestore());
       } catch (e) {
         debugPrint("Guardado offline no Firestore/Falha ao enviar: $e");
       }
@@ -493,7 +476,11 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
                     controller: _cnpjRapidoController,
                     keyboardType: TextInputType.number,
                     decoration: const InputDecoration(labelText: 'CNPJ da Empresa', prefixIcon: Icon(Icons.badge_outlined)),
-                    validator: (v) => (v == null || v.isEmpty) ? 'Insira o CNPJ' : null,
+                    validator: (v) {
+                      if (v == null || v.isEmpty) return 'Insira o CNPJ';
+                      if (!validarCnpj(v)) return 'CNPJ inválido';
+                      return null;
+                    },
                   ),
                   const SizedBox(height: 12),
                   TextFormField(
@@ -595,7 +582,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
         ),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
-          value: _cnpjSelecionadoParaProjeto.isEmpty ? null : _cnpjSelecionadoParaProjeto,
+          initialValue: _cnpjSelecionadoParaProjeto.isEmpty ? null : _cnpjSelecionadoParaProjeto,
           decoration: const InputDecoration(prefixIcon: Icon(Icons.business_center_outlined), hintText: 'Clique para escolher a empresa'),
           items: _listaEmpresasDisponiveisMenu.map((empresa) {
             return DropdownMenuItem<String>(value: empresa.cnpj, child: Text(empresa.nomeFantasia));
@@ -605,6 +592,9 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
               setState(() {
                 _cnpjSelecionadoParaProjeto = novoCnpj;
                 _empresaSelecionadaDadosObjeto = _listaEmpresasDisponiveisMenu.firstWhere((e) => e.cnpj == novoCnpj);
+                // Troca de empresa invalida as ferramentas/leituras já validadas para a seleção anterior
+                _ferramentasEscaneadasSucesso.clear();
+                _leiturasCapturadasOcr.clear();
               });
             }
           },
@@ -613,7 +603,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
         const Text('Tipo de Ensaio / Escopo Regulatório', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Colors.black87)),
         const SizedBox(height: 8),
         DropdownButtonFormField<String>(
-          value: _projetoSelecionado,
+          initialValue: _projetoSelecionado,
           decoration: const InputDecoration(prefixIcon: Icon(Icons.assignment_outlined), hintText: 'Selecione a natureza do escopo'),
           items: _escoposETestes.keys.map((tipo) {
             return DropdownMenuItem<String>(value: tipo, child: Text(tipo));
@@ -624,6 +614,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
                 _projetoSelecionado = v;
                 _ferramentasRequeridasAtuais = _escoposETestes[v] ?? [];
                 _ferramentasEscaneadasSucesso.clear();
+                _leiturasCapturadasOcr.clear();
               });
             }
           },
@@ -738,7 +729,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
 
         const SizedBox(height: 32),
         ElevatedButton(
-          onPressed: todasValidadas && _leiturasCapturadasOcr.length == _ferramentasRequeridasAtuais.length ? _criarProjetoFinal : null,
+          onPressed: todasValidadas && _leiturasCapturadasOcr.length == _ferramentasRequeridasAtuais.length && !_salvandoProjeto ? _criarProjetoFinal : null,
           style: ElevatedButton.styleFrom(
             padding: const EdgeInsets.symmetric(vertical: 16),
             backgroundColor: Colors.green[700],

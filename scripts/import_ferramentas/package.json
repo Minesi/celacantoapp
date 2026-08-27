@@ -1,0 +1,14 @@
+{
+  "name": "import_ferramentas",
+  "private": true,
+  "version": "1.0.0",
+  "description": "One-off script to import tools from SIVS_PADROES xlsx into Firestore 'instrumentos' collection.",
+  "main": "import.js",
+  "scripts": {
+    "import": "node import.js"
+  },
+  "dependencies": {
+    "firebase-admin": "^12.7.0",
+    "xlsx": "^0.18.5"
+  }
+}

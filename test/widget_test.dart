@@ -1,7 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:path/path.dart';
-import 'package:sqflite/sqflite.dart';
 
 import 'package:celacantoapp/database_helper.dart';
 import 'package:celacantoapp/instrumento_model.dart';
