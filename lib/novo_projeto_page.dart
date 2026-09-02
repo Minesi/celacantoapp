@@ -295,30 +295,39 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
           ],
         );
       },
-    ).then((_) => manualController.dispose());
+    );
+    // Não dispose aqui: o Future de showDialog() completa assim que pop() é chamado,
+    // antes da animação de saída do diálogo terminar. Disparar dispose() nesse
+    // instante derruba o TextField ainda visível na transição de saída
+    // ("used after being disposed"). O controller é local e de vida curta.
   }
 
   void _dispararLeituraOcrDisplay(String tipoFerramentaVinculada) async {
-    final textoExtraidoOcr = await Navigator.push<String>(
+    final resultadoLeituras = await Navigator.push<List<String>>(
       context,
-      MaterialPageRoute(builder: (context) => const CapturaOcrPage()),
+      MaterialPageRoute(builder: (context) => CapturaOcrPage(nomeFerramenta: tipoFerramentaVinculada)),
     );
 
-    if (textoExtraidoOcr != null && textoExtraidoOcr.isNotEmpty) {
+    if (resultadoLeituras != null && resultadoLeituras.isNotEmpty) {
       final instrumentoVinculado = _ferramentasEscaneadasSucesso[tipoFerramentaVinculada];
       final tagCodigoFerramenta = instrumentoVinculado?.tag ?? 'N/A';
 
       setState(() {
-        _leiturasCapturadasOcr.add(LeituraModel(
-          equipamento: tipoFerramentaVinculada,
-          codigoFerramenta: tagCodigoFerramenta,
-          valorCapturado: textoExtraidoOcr, 
-          dataHoraCaptura: DateTime.now(),
-        ));
+        // Uma recaptura substitui integralmente as leituras anteriores desta ferramenta
+        _leiturasCapturadasOcr.removeWhere((l) => l.equipamento == tipoFerramentaVinculada);
+        for (var i = 0; i < resultadoLeituras.length; i++) {
+          _leiturasCapturadasOcr.add(LeituraModel(
+            equipamento: tipoFerramentaVinculada,
+            codigoFerramenta: tagCodigoFerramenta,
+            numeroLeitura: i + 1,
+            valorCapturado: resultadoLeituras[i],
+            dataHoraCaptura: DateTime.now(),
+          ));
+        }
       });
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Display de $tipoFerramentaVinculada anexado via OCR!'), backgroundColor: Colors.green),
+        SnackBar(content: Text('${resultadoLeituras.length} leitura(s) de $tipoFerramentaVinculada anexada(s) via OCR!'), backgroundColor: Colors.green),
       );
     }
   }
@@ -361,11 +370,13 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
       // CORREÇÃO: Sincronização exata com a assinatura real do seu RelatorioService
       final relatorioService = RelatorioService();
       final templatePath = relatorioService.assetPathParaProjeto(_projetoSelecionado!);
-      final arquivoRelatorio = await relatorioService.gerarRelatorioProjeto(
+      final resultadoRelatorio = await relatorioService.gerarRelatorioProjeto(
         projeto: novoProjetoCompletoObjeto,
         nomeEmpresa: _empresaSelecionadaDadosObjeto!.nomeFantasia,
         assetTemplatePath: templatePath,
       );
+      final arquivoRelatorio = resultadoRelatorio.arquivo;
+      final localizacaoRelatorio = resultadoRelatorio.localizacao;
 
       final projetoMapaLocal = {
         'id': novoProjetoCompletoObjeto.id,
@@ -390,16 +401,27 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('Projeto $idUnicoProjeto salvo, mas o relatório Word não pôde ser gerado. Verifique o template.'), backgroundColor: Colors.orange),
         );
-      } else if (novoProjetoCompletoObjeto.leiturasOcr.length > RelatorioService.maxSlotsLeituraTemplate) {
+      } else if (resultadoRelatorio.avisos.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Projeto $idUnicoProjeto gerado, mas o template só suporta ${RelatorioService.maxSlotsLeituraTemplate} leituras — as excedentes não aparecem no relatório.'), backgroundColor: Colors.orange),
+          SnackBar(content: Text('Projeto $idUnicoProjeto gerado, mas: ${resultadoRelatorio.avisos.join(' | ')}'), backgroundColor: Colors.orange),
         );
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Projeto $idUnicoProjeto gerado com sucesso!'), backgroundColor: Colors.green),
+          SnackBar(content: Text('Projeto $idUnicoProjeto gerado em Downloads/Celacanto.'), backgroundColor: Colors.green),
         );
       }
 
+      if (localizacaoRelatorio != null) {
+        final abriu = await relatorioService.abrirRelatorio(localizacaoRelatorio);
+        if (!mounted) return;
+        if (!abriu) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Relatório salvo em Downloads, mas não foi possível abri-lo automaticamente.')),
+          );
+        }
+      }
+
+      if (!mounted) return;
       Navigator.of(context).pop();
     } catch (e) {
       if (!mounted) return;
@@ -633,6 +655,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
 
   Widget _buildPainelEtapa2() {
     bool todasValidadas = _ferramentasEscaneadasSucesso.length == _ferramentasRequeridasAtuais.length;
+    final ferramentasComLeituraOcr = _leiturasCapturadasOcr.map((l) => l.equipamento).toSet();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -698,26 +721,28 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
                 itemCount: _ferramentasEscaneadasSucesso.keys.length,
                 itemBuilder: (context, idx) {
                   final tipoFerramenta = _ferramentasEscaneadasSucesso.keys.elementAt(idx);
-                  
-                  final leituraExistente = _leiturasCapturadasOcr.any((l) => l.equipamento == tipoFerramenta)
-                      ? _leiturasCapturadasOcr.firstWhere((l) => l.equipamento == tipoFerramenta)
-                      : null;
+
+                  final leiturasDoTipo = _leiturasCapturadasOcr.where((l) => l.equipamento == tipoFerramenta).toList()
+                    ..sort((a, b) => a.numeroLeitura.compareTo(b.numeroLeitura));
 
                   return Card(
-                    color: leituraExistente != null ? Colors.blue[50] : Colors.grey[100],
+                    color: leiturasDoTipo.isNotEmpty ? Colors.blue[50] : Colors.grey[100],
                     margin: const EdgeInsets.symmetric(vertical: 4),
                     child: ListTile(
-                      leading: Icon(Icons.document_scanner, color: leituraExistente != null ? Colors.blue : Colors.grey),
+                      leading: Icon(Icons.document_scanner, color: leiturasDoTipo.isNotEmpty ? Colors.blue : Colors.grey),
                       title: Text('Display de $tipoFerramenta'),
-                      subtitle: leituraExistente != null 
-                          ? Text('Valor Capturado: ${leituraExistente.valorCapturado}', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue))
+                      subtitle: leiturasDoTipo.isNotEmpty
+                          ? Text(
+                              '${leiturasDoTipo.length} leitura(s): ${leiturasDoTipo.map((l) => l.valorCapturado).join(', ')}',
+                              style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blue),
+                            )
                           : const Text('Nenhuma captura realizada ainda.', style: TextStyle(fontSize: 12, color: Colors.grey)),
                       trailing: ElevatedButton.icon(
                         onPressed: () => _dispararLeituraOcrDisplay(tipoFerramenta),
                         icon: const Icon(Icons.camera_alt, size: 14),
-                        label: Text(leituraExistente != null ? 'Re-capturar' : 'Capturar'),
+                        label: Text(leiturasDoTipo.isNotEmpty ? 'Re-capturar' : 'Capturar'),
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: leituraExistente != null ? Colors.grey : Colors.blueGrey,
+                          backgroundColor: leiturasDoTipo.isNotEmpty ? Colors.grey : Colors.blueGrey,
                           foregroundColor: Colors.white,
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4)
                         ),
@@ -729,7 +754,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
 
         const SizedBox(height: 32),
         ElevatedButton(
-          onPressed: todasValidadas && _leiturasCapturadasOcr.length == _ferramentasRequeridasAtuais.length && !_salvandoProjeto ? _criarProjetoFinal : null,
+          onPressed: todasValidadas && ferramentasComLeituraOcr.length == _ferramentasRequeridasAtuais.length && !_salvandoProjeto ? _criarProjetoFinal : null,
           style: ElevatedButton.styleFrom(
             padding: const EdgeInsets.symmetric(vertical: 16),
             backgroundColor: Colors.green[700],

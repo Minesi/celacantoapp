@@ -284,15 +284,17 @@ class HomePage extends StatelessWidget {
   // --- FUNÇÃO ASSÍNCRONA DO OCR (CORRIGIDA) ---
   Future<void> _abrirLeitorOcr(BuildContext context) async {
 //Abre a tela da câmera do OCR de forma limpa (Modo Teste) e aguarda o retorno
-    final String? textoDetectado = await Navigator.push<String>(
+    final List<String>? leiturasDetectadas = await Navigator.push<List<String>>(
       context,
-      MaterialPageRoute(builder: (context) => CapturaOcrPage()),      
+      MaterialPageRoute(builder: (context) => const CapturaOcrPage(nomeFerramenta: 'Teste')),
     );
     // Se cancelou ou voltou sem ler nada, encerra a função
-    if (textoDetectado == null) return;
+    if (leiturasDetectadas == null || leiturasDetectadas.isEmpty) return;
     
     // Verificação de segurança para contextos assíncronos
     if (!context.mounted) return;
+
+    final textoDetectado = leiturasDetectadas.join(', ');
 
     // Apresenta o resultado que o OCR extraiu no display em uma modal da Home
     showDialog(

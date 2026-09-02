@@ -4,13 +4,11 @@ import 'package:camera/camera.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart'; // Motor real do OCR
 
 class CapturaOcrPage extends StatefulWidget {
-  final String? idProjeto;
-  final String? tipoProjeto;
+  final String nomeFerramenta;
 
   const CapturaOcrPage({
     super.key,
-    this.idProjeto,
-    this.tipoProjeto,
+    required this.nomeFerramenta,
   });
 
   @override
@@ -18,6 +16,9 @@ class CapturaOcrPage extends StatefulWidget {
 }
 
 class _CapturaOcrPageState extends State<CapturaOcrPage> {
+  // Teto de leituras aceitas para uma mesma ferramenta em uma única sessão de captura
+  static const int maxLeiturasPorFerramenta = 10;
+
   CameraController? _cameraController;
   bool _mostrarDigitacaoManual = false;
   bool _erroNaCamera = false;
@@ -27,18 +28,13 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> {
   // Instancia o Reconhecedor de Texto do Google ML Kit
   final TextRecognizer _textRecognizer = TextRecognizer(script: TextRecognitionScript.latin);
 
-  // --- CONTROLE DE ESTADO DO FLUXO DE MEDIÇÕES ---
-  List<String> _ferramentasDoProjeto = [];
-  int _indiceFerramentaAtual = 0;
-  int _tentativaLeituraAtual = 1; 
-
-  final List<Map<String, dynamic>> _leiturasRegistradasFinal = [];
-  String _valorLeitura1SendoFeita = '';
+  // --- CONTROLE DE ESTADO DO FLUXO DE MEDIÇÕES (todas para widget.nomeFerramenta) ---
+  int _tentativaLeituraAtual = 1;
+  final List<String> _leiturasDaFerramenta = [];
 
   @override
   void initState() {
     super.initState();
-    _definirEscopoDeFerramentas();
     _inicializarCameraDoDispositivo();
   }
 
@@ -46,19 +42,14 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> {
   void dispose() {
     _cameraController?.dispose();
     _ocrManualController.dispose();
-    _textRecognizer.close(); // Fecha o motor analítico para evitar vazamento de memória
+    // Em plataformas sem suporte ao ML Kit (ex: Windows/Linux desktop), close()
+    // retorna um Future que rejeita com MissingPluginException; sem tratar essa
+    // rejeição, ela vaza como erro não capturado mesmo dentro de um try/catch
+    // síncrono. Nunca deve derrubar o dispose da página.
+    _textRecognizer.close().catchError((Object e) {
+      debugPrint('Falha ao fechar o TextRecognizer (plataforma sem suporte ao ML Kit?): $e');
+    });
     super.dispose();
-  }
-
-  void _definirEscopoDeFerramentas() {
-    final tipo = widget.tipoProjeto ?? '';
-    if (tipo.contains('Fluxo Laminar')) {
-      _ferramentasDoProjeto = ['Anemômetro', 'Manômetro Diferencial'];
-    } else if (tipo.contains('Área Limpa')) {
-      _ferramentasDoProjeto = ['Manômetro Diferencial', 'Anemômetro'];
-    } else {
-      _ferramentasDoProjeto = ['Manômetro Diferencial'];
-    }
   }
 
   Future<void> _inicializarCameraDoDispositivo() async {
@@ -157,7 +148,7 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                'Ferramenta Atual:\n${_ferramentasDoProjeto[_indiceFerramentaAtual]}',
+                'Ferramenta Atual:\n${widget.nomeFerramenta}',
                 textAlign: TextAlign.center,
                 style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15),
               ),
@@ -205,72 +196,118 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> {
   }
 
   void _registrarEAvancarFluxo(String valorDefinitivo) {
-    if (_tentativaLeituraAtual == 1) {
-      _valorLeitura1SendoFeita = valorDefinitivo;
-      
-      // Pergunta se deseja coletar a segunda medição para a mesma ferramenta
-      showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          icon: const Icon(Icons.add_chart_rounded, color: Colors.orange, size: 40),
-          title: const Text('Nova Medição?'),
-          content: Text('Deseja realizar a segunda leitura (Leitura 2) para a ferramenta ${_ferramentasDoProjeto[_indiceFerramentaAtual]}?'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.pop(context);
-                // Usuário não quis a segunda leitura, salva apenas a primeira
-                _salvarMapeamentoCompletoDaFerramenta(leitura1: _valorLeitura1SendoFeita, leitura2: '');
-              },
-              child: const Text('Não, Avançar'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context);
-                setState(() {
-                  _tentativaLeituraAtual = 2; // Seta para capturar o segundo valor
-                });
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800]),
-              child: const Text('Sim, Coletar Leitura 2', style: TextStyle(color: Colors.white)),
-            )
-          ],
+    _leiturasDaFerramenta.add(valorDefinitivo);
+
+    if (_leiturasDaFerramenta.length >= maxLeiturasPorFerramenta) {
+      // Teto atingido: encerra automaticamente, sem perguntar por mais uma captura
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Limite de $maxLeiturasPorFerramenta leituras atingido para ${widget.nomeFerramenta}.'),
+          backgroundColor: Colors.orange,
         ),
       );
-    } else {
-      // É a leitura 2, consolida o mapa
-      _salvarMapeamentoCompletoDaFerramenta(leitura1: _valorLeitura1SendoFeita, leitura2: valorDefinitivo);
+      Navigator.pop(context, _leiturasDaFerramenta);
+      return;
     }
-  }
 
-  void _salvarMapeamentoCompletoDaFerramenta({required String leitura1, required String leitura2}) {
-    _leiturasRegistradasFinal.add({
-      'ferramenta': _ferramentasDoProjeto[_indiceFerramentaAtual],
-      'leitura_1': leitura1,
-      'leitura_2': leitura2,
-    });
-
-    if (_indiceFerramentaAtual + 1 < _ferramentasDoProjeto.length) {
-      // Vai para a próxima ferramenta obrigatória do escopo
-      setState(() {
-        _indiceFerramentaAtual++;
-        _tentativaLeituraAtual = 1;
-        _valorLeitura1SendoFeita = '';
-        _mostrarDigitacaoManual = false;
-      });
-    } else {
-      // Finalizou o circuito de todas as ferramentas, retorna a lista estruturada para a página pai
-      Navigator.pop(context, _leiturasRegistradasFinal);
-    }
+    // Pergunta se haverá mais uma captura para a mesma ferramenta ou se essa foi a última
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => AlertDialog(
+        icon: const Icon(Icons.add_chart_rounded, color: Colors.orange, size: 40),
+        title: const Text('Nova Medição?'),
+        content: Text(
+          'Deseja realizar a leitura ${_leiturasDaFerramenta.length + 1} para a ferramenta ${widget.nomeFerramenta}, ou essa foi a última?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () {
+              Navigator.pop(context); // fecha o diálogo
+              Navigator.pop(context, _leiturasDaFerramenta); // retorna a lista final desta ferramenta
+            },
+            child: const Text('Foi a Última'),
+          ),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(context);
+              setState(() {
+                _tentativaLeituraAtual = _leiturasDaFerramenta.length + 1;
+                _mostrarDigitacaoManual = false;
+              });
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800]),
+            child: const Text('Sim, Nova Captura', style: TextStyle(color: Colors.white)),
+          )
+        ],
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
+    // Sem câmera disponível (ex: desktop ou permissão negada): cai direto para a
+    // mesma entrada manual usada como alternativa em campo, ao invés de um beco sem saída.
     if (_erroNaCamera) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Coleta OCR')),
-        body: const Center(child: Text('Hardware da câmera indisponível ou permissão negada.')),
+        appBar: AppBar(
+          title: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text('OCR: ${widget.nomeFerramenta}'),
+              Text(
+                'Leitura $_tentativaLeituraAtual de $maxLeiturasPorFerramenta',
+                style: const TextStyle(color: Colors.orange, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+        body: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.all(20),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Icon(Icons.camera_alt_outlined, size: 48, color: Colors.grey),
+                const SizedBox(height: 12),
+                const Text(
+                  'Câmera indisponível nesta plataforma/dispositivo. Utilize a digitação manual abaixo.',
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 24),
+                TextFormField(
+                  controller: _ocrManualController,
+                  autofocus: true,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: InputDecoration(
+                    labelText: 'Valor para Leitura $_tentativaLeituraAtual',
+                    border: const OutlineInputBorder(),
+                    hintText: 'Ex: 24.5 ou 1.15',
+                    prefixIcon: const Icon(Icons.speed),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () {
+                    if (_ocrManualController.text.trim().isNotEmpty) {
+                      final valorDigitado = _ocrManualController.text.trim();
+                      _processarValorCapturado(valorDigitado);
+                    }
+                  },
+                  icon: const Icon(Icons.check, color: Colors.white),
+                  label: const Text('Confirmar Medição', style: TextStyle(color: Colors.white)),
+                  style: ElevatedButton.styleFrom(backgroundColor: Colors.orange[800]),
+                ),
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: () => Navigator.pop(context),
+                  child: const Text('Cancelar'),
+                ),
+              ],
+            ),
+          ),
+        ),
       );
     }
 
@@ -286,9 +323,9 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> {
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('OCR: ${_ferramentasDoProjeto[_indiceFerramentaAtual]}'),
+            Text('OCR: ${widget.nomeFerramenta}'),
             Text(
-              'Etapa ${_indiceFerramentaAtual + 1} de ${_ferramentasDoProjeto.length} | L$_tentativaLeituraAtual',
+              'Leitura $_tentativaLeituraAtual de $maxLeiturasPorFerramenta',
               style: const TextStyle(color: Colors.amber, fontSize: 11),
             ),
           ],
