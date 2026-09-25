@@ -1,0 +1,315 @@
+Schema de Template de Relatório — Design
+Ideia central
+Separar três coisas que hoje provavelmente estão misturadas:
+
+Template — define quais campos existem, em que seção, quem pode editar cada um, de onde vem o valor (OCR, manual, calculado), e como cada campo se conecta a um documento Word base.
+Instância — os valores preenchidos para um relatório específico, com status de fluxo (rascunho → revisão → aprovado).
+Renderização — o formulário dinâmico (Flutter) e o .docx final são duas "visualizações" geradas a partir de Template + Instância. Nenhum dos dois é a fonte da verdade.
+Isso resolve diretamente o problema de "projetos semelhantes com campos diferentes": você não cria telas novas, cria (ou edita) um template.
+
+1. Entidades
+ReportTemplate
+{
+  "templateId": "insp_ferramenta_v1",
+  "name": "Inspeção de Ferramenta - Padrão",
+  "version": 1,
+  "projectType": "inspecao_ferramenta",
+  "docxTemplateFile": "templates/insp_ferramenta_v1.docx",
+  "sections": [ /* ReportSection[] */ ]
+}
+docxTemplateFile aponta para o arquivo Word base, um .docx comum feito no Word/Google Docs, com placeholders no texto (ex: {numero_serie}, {data_inspecao}). Esse arquivo é o "molde"; a geração final é um mail merge — pega esse molde e substitui os placeholders pelos valores da instância. Mais detalhes na seção 4.
+
+ReportSection
+{
+  "sectionId": "dados_gerais",
+  "title": "Dados Gerais",
+  "order": 1,
+  "fields": [ /* FieldSchema[] */ ]
+}
+FieldSchema
+{
+  "fieldId": "numero_serie",
+  "label": "Número de Série",
+  "type": "text",
+  "order": 1,
+  "required": true,
+  "source": "ocr",
+  "ocrKey": "serial_number",
+  "mergeTag": "numero_serie",
+  "editableBy": ["tecnico", "supervisor"],
+  "defaultValue": null,
+  "validation": { "regex": "^[A-Z0-9]{6,12}$" },
+  "options": null,
+  "visibleIf": null
+}
+Campos-chave de FieldSchema:
+
+Campo	Para que serve
+type	text, number, decimal, date, datetime, boolean, select, multiselect, photo, signature, calculated
+source	manual, ocr, calculated — de onde o valor inicial vem
+ocrKey	chave no resultado bruto do OCR que alimenta este campo (quando source: ocr)
+mergeTag	nome do placeholder no .docx base (ex: {numero_serie}). Por padrão é igual ao fieldId; só declare quando divergir
+editableBy	lista de papéis que podem alterar o valor naquele momento do fluxo (ver seção 3)
+validation	regras simples: min, max, regex, maxLength
+options	para select/multiselect: [{ "value": "a", "label": "Aprovado" }]
+visibleIf	condição simples, ex: { "fieldId": "tem_defeito", "equals": true } — campo só aparece/é obrigatório se outro campo tiver certo valor
+formula	usado quando type: calculated, ex: "campo_a - campo_b" (resolvido no app, mas revalide no backend antes de gerar o documento final)
+Campos do tipo photo/signature exigem um mergeTag que aponte para uma imagem dentro do docx (não texto) — a ferramenta de geração precisa suportar módulo de imagem (ver seção 4).
+
+ReportInstance
+{
+  "instanceId": "uuid-123",
+  "templateId": "insp_ferramenta_v1",
+  "templateVersion": 1,
+  "projectId": "obra-045",
+  "status": "em_revisao",
+  "createdBy": { "userId": "u1", "role": "tecnico" },
+  "createdAt": "2026-09-10T14:03:00Z",
+  "values": {
+    "numero_serie": "AB12345",
+    "tem_defeito": true,
+    "observacao_supervisor": null
+  },
+  "generatedDocxUrl": null,
+  "history": [
+    {
+      "at": "2026-09-10T14:03:00Z",
+      "userId": "u1",
+      "role": "tecnico",
+      "fieldId": "numero_serie",
+      "oldValue": null,
+      "newValue": "AB12345"
+    }
+  ]
+}
+generatedDocxUrl só é preenchido quando o documento final é gerado (normalmente na aprovação) — link para o arquivo .docx resultante armazenado (Storage/S3/etc).
+
+Ponto importante: templateVersion fica travado na instância. Se você mudar o template depois (adicionar/remover campo, trocar o .docx base), relatórios já criados não quebram — sempre sabe exatamente qual estrutura e qual molde geraram aquele documento.
+
+2. Por que isso resolve os 3 problemas que você descreveu
+Campos variam por projeto → cada projectType tem seu próprio ReportTemplate (schema + arquivo .docx base próprio). Adicionar/remover campo = editar o JSON do template e o molde Word correspondente, sem precisar publicar nova versão do app.
+Saída em DOCX → o gerador percorre sections → fields, monta um mapa { mergeTag: valor } e faz o merge no arquivo docxTemplateFile. Um único motor de geração serve qualquer template, desde que o .docx base tenha os placeholders certos.
+Edição em etapas (técnico → supervisor) → editableBy no campo, combinado com status na instância, exatamente como antes. A diferença é quando o .docx é gerado: normalmente só na aprovação final, para que o documento entregue já reflita os dados do técnico e do supervisor.
+3. Geração do .docx — onde isso deve rodar
+Diferente do PDF (que o pacote pdf gera bem 100% no Flutter), gerar .docx de verdade direto em Dart é limitado. O caminho mais robusto é gerar no backend:
+
+Node.js + docxtemplater (mais popular para esse padrão de "molde com placeholders", suporta loops, condicionais e módulo de imagem para foto/assinatura) rodando como Cloud Function/API.
+Python + python-docx (mais controle programático, mas você escreve a lógica de substituição você mesmo, ou usa docxtpl, que também trabalha com placeholders tipo Jinja — {{ numero_serie }}).
+Fluxo:
+
+Flutter monta o JSON { mergeTag: valor } a partir de instance.values + template.allFieldsOrdered.
+Envia esse JSON + templateId para a function/API.
+Backend carrega docxTemplateFile correspondente, faz o merge, salva o .docx gerado em storage.
+Backend devolve a URL; Flutter atualiza instance.generatedDocxUrl e oferece download/compartilhamento.
+Isso evita depender de bibliotecas Dart imaturas para .docx e reaproveita ferramentas maduras. O app Flutter continua sendo o dono dos dados e da UI; ele só delega a etapa de "montar o Word" pra fora.
+
+Trade-off a ter em mente: depois que o .docx é gerado e entregue, se alguém editar esse arquivo diretamente no Word, essa edição não volta pro seu banco de dados. Trate o .docx final como uma exportação — qualquer correção deveria idealmente voltar pro app (reabrir a instância, se o status permitir) e gerar o documento de novo, não editar o Word manualmente.
+
+4. Modelos em Dart
+enum FieldType {
+  text, number, decimal, date, datetime, boolean,
+  select, multiselect, photo, signature, calculated
+}
+
+enum FieldSource { manual, ocr, calculated }
+
+enum UserRole { tecnico, supervisor }
+
+enum ReportStatus { rascunho, emRevisao, aprovado }
+
+class FieldValidation {
+  final num? min;
+  final num? max;
+  final String? regex;
+  final int? maxLength;
+
+  FieldValidation({this.min, this.max, this.regex, this.maxLength});
+
+  factory FieldValidation.fromJson(Map<String, dynamic> json) => FieldValidation(
+        min: json['min'],
+        max: json['max'],
+        regex: json['regex'],
+        maxLength: json['maxLength'],
+      );
+}
+
+class SelectOption {
+  final String value;
+  final String label;
+
+  SelectOption({required this.value, required this.label});
+
+  factory SelectOption.fromJson(Map<String, dynamic> json) =>
+      SelectOption(value: json['value'], label: json['label']);
+}
+
+class VisibilityCondition {
+  final String fieldId;
+  final dynamic equals;
+
+  VisibilityCondition({required this.fieldId, required this.equals});
+
+  factory VisibilityCondition.fromJson(Map<String, dynamic> json) =>
+      VisibilityCondition(fieldId: json['fieldId'], equals: json['equals']);
+
+  bool isSatisfiedBy(Map<String, dynamic> values) =>
+      values[fieldId] == equals;
+}
+
+class FieldSchema {
+  final String fieldId;
+  final String label;
+  final FieldType type;
+  final int order;
+  final bool required;
+  final FieldSource source;
+  final String? ocrKey;
+  final String? mergeTag;
+  final List<UserRole> editableBy;
+  final dynamic defaultValue;
+  final FieldValidation? validation;
+  final List<SelectOption>? options;
+  final VisibilityCondition? visibleIf;
+  final String? formula;
+
+  FieldSchema({
+    required this.fieldId,
+    required this.label,
+    required this.type,
+    required this.order,
+    required this.required,
+    required this.source,
+    this.ocrKey,
+    this.mergeTag,
+    required this.editableBy,
+    this.defaultValue,
+    this.validation,
+    this.options,
+    this.visibleIf,
+    this.formula,
+  });
+
+  // Placeholder no .docx: usa mergeTag se declarado, senão cai no fieldId
+  String get effectiveMergeTag => mergeTag ?? fieldId;
+
+  factory FieldSchema.fromJson(Map<String, dynamic> json) => FieldSchema(
+        fieldId: json['fieldId'],
+        label: json['label'],
+        type: FieldType.values.byName(json['type']),
+        order: json['order'],
+        required: json['required'] ?? false,
+        source: FieldSource.values.byName(json['source'] ?? 'manual'),
+        ocrKey: json['ocrKey'],
+        mergeTag: json['mergeTag'],
+        editableBy: (json['editableBy'] as List)
+            .map((e) => UserRole.values.byName(e))
+            .toList(),
+        defaultValue: json['defaultValue'],
+        validation: json['validation'] != null
+            ? FieldValidation.fromJson(json['validation'])
+            : null,
+        options: json['options'] != null
+            ? (json['options'] as List)
+                .map((e) => SelectOption.fromJson(e))
+                .toList()
+            : null,
+        visibleIf: json['visibleIf'] != null
+            ? VisibilityCondition.fromJson(json['visibleIf'])
+            : null,
+        formula: json['formula'],
+      );
+}
+
+class ReportSection {
+  final String sectionId;
+  final String title;
+  final int order;
+  final List<FieldSchema> fields;
+
+  ReportSection({
+    required this.sectionId,
+    required this.title,
+    required this.order,
+    required this.fields,
+  });
+
+  factory ReportSection.fromJson(Map<String, dynamic> json) => ReportSection(
+        sectionId: json['sectionId'],
+        title: json['title'],
+        order: json['order'],
+        fields: (json['fields'] as List)
+            .map((e) => FieldSchema.fromJson(e))
+            .toList(),
+      );
+}
+
+class ReportTemplate {
+  final String templateId;
+  final String name;
+  final int version;
+  final String projectType;
+  final String docxTemplateFile;
+  final List<ReportSection> sections;
+
+  ReportTemplate({
+    required this.templateId,
+    required this.name,
+    required this.version,
+    required this.projectType,
+    required this.docxTemplateFile,
+    required this.sections,
+  });
+
+  factory ReportTemplate.fromJson(Map<String, dynamic> json) => ReportTemplate(
+        templateId: json['templateId'],
+        name: json['name'],
+        version: json['version'],
+        projectType: json['projectType'],
+        docxTemplateFile: json['docxTemplateFile'],
+        sections: (json['sections'] as List)
+            .map((e) => ReportSection.fromJson(e))
+            .toList(),
+      );
+
+  // Útil na hora de gerar o formulário e o payload de merge: lista plana ordenada
+  List<FieldSchema> get allFieldsOrdered {
+    final fields = sections.expand((s) => s.fields).toList();
+    fields.sort((a, b) => a.order.compareTo(b.order));
+    return fields;
+  }
+
+  // Monta o payload { mergeTag: valor } que vai pro backend gerar o .docx
+  Map<String, dynamic> buildMergePayload(Map<String, dynamic> values) {
+    return {
+      for (final field in allFieldsOrdered)
+        field.effectiveMergeTag: values[field.fieldId]
+    };
+  }
+}
+Regra de "quem pode editar agora" (usada tanto no formulário quanto — de forma espelhada — no backend):
+
+bool canEdit(FieldSchema field, UserRole currentRole, ReportStatus status) {
+  if (!field.editableBy.contains(currentRole)) return false;
+  switch (currentRole) {
+    case UserRole.tecnico:
+      return status == ReportStatus.rascunho;
+    case UserRole.supervisor:
+      return status == ReportStatus.emRevisao;
+  }
+}
+5. Fluxo de ponta a ponta
+Técnico escaneia a ferramenta → OCR retorna um mapa { ocrKey: valor } → app cria ReportInstance com status: rascunho, preenchendo automaticamente todo FieldSchema cujo source == ocr a partir de ocrKey.
+Formulário dinâmico é montado iterando template.allFieldsOrdered; campo é editável se canEdit(...) == true.
+Técnico revisa/completa campos manuais e finaliza → status: em_revisao, salva no backend.
+Supervisor abre a mesma instância → agora só os campos dele ficam liberados.
+Supervisor aprova → status: aprovado → nesse momento o app chama o backend com template.buildMergePayload(instance.values), o backend faz o merge no docxTemplateFile e devolve o .docx final, salvo em instance.generatedDocxUrl.
+Cada alteração de campo é registrada em history (quem, quando, valor antigo/novo) — importante se isso tiver qualquer peso de laudo técnico.
+6. Onde guardar os templates
+Não deixe os templates hard-coded no app. Guarde em Firestore (coleção report_templates) ou numa API própria, com projectType como chave de busca, e os arquivos .docx base num Storage. Assim, adicionar um campo novo em um tipo de projeto = editar um documento + (se precisar) o molde Word, sem novo build/release do Flutter.
+
+Próximos passos sugeridos
+Definir a lista fechada de FieldType que você realmente precisa (comece enxuto — texto, número, data, select, foto — e adicione depois).
+Escolher a stack do backend de geração (docxtemplater em Node costuma ser o caminho mais direto para esse padrão de placeholders).
+Implementar canEdit também no backend (regra de segurança do Firestore ou middleware da API), nunca confiar só na UI.
+Criar o primeiro .docx base real com os placeholders e testar o merge isoladamente antes de plugar no fluxo completo do app.
+Criar 1–2 templates reais e testar o ciclo completo técnico → supervisor → .docx antes de generalizar mais.

@@ -6,7 +6,8 @@ import 'database_helper.dart';
 import 'firestore_colecoes.dart';
 import 'usuario_model.dart';
 
-enum PerfilUsuario { operador, supervisor, admin }
+// redator = equipe de elaboração/estrutura prévia do relatório (antes de ir a campo)
+enum PerfilUsuario { admin, tecnico, supervisor, redator }
 
 class UsuarioLogado {
   final String nome;
@@ -175,7 +176,7 @@ class AuthService {
           'nome': usuarioLocal.first['nome'] ?? '',
           'cpf': usuarioLocal.first['cpf'] ?? '',
           'email': usuarioLocal.first['email'] ?? '',
-          'perfil': usuarioLocal.first['perfil'] ?? 'operador',
+          'perfil': usuarioLocal.first['perfil'] ?? 'tecnico',
           'dominio_empresa': usuarioLocal.first['dominio_empresa'] ?? '',
         };
       }

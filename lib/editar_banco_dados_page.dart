@@ -101,7 +101,7 @@ class _EditarBancoDadosPageState extends State<EditarBancoDadosPage> {
       // Tratamento para converter a String do banco de volta para o Enum
       _perfilEditSelecionado = PerfilUsuario.values.firstWhere(
         (p) => p.name == usuario['perfil'],
-        orElse: () => PerfilUsuario.operador,
+        orElse: () => PerfilUsuario.tecnico,
       );
     });
   }

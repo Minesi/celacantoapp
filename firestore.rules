@@ -1,0 +1,99 @@
+rules_version = '2';
+
+// Espelha a regra "quem edita a frente nao edita resultado, e vice-versa" definida na reuniao
+// de requisitos: redator escreve campos de configuracao do projeto, tecnico escreve apenas
+// os campos de resultado de campo, supervisor/admin tem override total.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function perfilDoUsuarioLogado() {
+      return get(/databases/$(database)/documents/usuarios/$(request.auth.uid)).data.perfil;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && perfilDoUsuarioLogado() == 'admin';
+    }
+
+    function isSupervisor() {
+      return isSignedIn() && perfilDoUsuarioLogado() == 'supervisor';
+    }
+
+    function isRedator() {
+      return isSignedIn() && perfilDoUsuarioLogado() == 'redator';
+    }
+
+    function isTecnico() {
+      return isSignedIn() && perfilDoUsuarioLogado() == 'tecnico';
+    }
+
+    // Supervisor/admin sempre podem autorizar excecoes (instrumento vencido, teste
+    // incompleto, alteracao de resultado ja lancado), conforme a reuniao.
+    function temOverride() {
+      return isSupervisor() || isAdmin();
+    }
+
+    // --- USUARIOS ---
+    match /usuarios/{uid} {
+      allow read: if isSignedIn() && (request.auth.uid == uid || temOverride());
+      allow create, update, delete: if temOverride();
+    }
+
+    // --- EMPRESAS (cadastradas pelo redator na elaboracao, ou por supervisor/admin) ---
+    match /empresas/{cnpjOuDominio} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isRedator() || temOverride();
+    }
+
+    // --- SISTEMAS (ex.: "HDA04", cadastrados pelo redator na elaboracao) ---
+    match /sistemas/{sistemaId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isRedator() || temOverride();
+    }
+
+    // --- INSTRUMENTOS (gestao de ferramentas: restrita a supervisor/admin) ---
+    match /instrumentos/{instrumentoId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if temOverride();
+    }
+
+    // --- TESTES_CATALOGO (resumo/tabela por tipo de teste, editados pelo redator) ---
+    match /testes_catalogo/{testeId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if isRedator() || temOverride();
+    }
+
+    // --- NORMAS_CONFIG (tabelas/formulas de norma tecnica, editaveis na configuracao) ---
+    match /normas_config/{normaId} {
+      allow read: if isSignedIn();
+      allow create, update, delete: if temOverride();
+    }
+
+    // --- PROJETOS / RELATORIOS ---
+    match /projetos/{projetoId} {
+      allow read: if isSignedIn();
+
+      // Elaboracao cria o projeto pre-preenchido; supervisor/admin tambem podem.
+      allow create: if isRedator() || temOverride();
+
+      // Redator só altera campos de configuração; técnico só altera campos de resultado;
+      // supervisor/admin podem alterar qualquer campo (override).
+      allow update: if temOverride()
+        || (isRedator() && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['sistemaId', 'area', 'salas', 'handlingUnits', 'ensaiosSelecionados',
+                        'tipoProjeto', 'ferramentasRequeridas', 'templateUtilizado']))
+        || (isTecnico() && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['ferramentasEscaneadas', 'leiturasOcr', 'pontosLeitura', 'status', 'history']));
+
+      allow delete: if temOverride();
+    }
+
+    // Nega tudo que não foi explicitamente liberado acima.
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

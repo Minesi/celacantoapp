@@ -24,4 +24,16 @@ class LeituraModel {
       'dataHoraCaptura': dataHoraCaptura.toIso8601String(),
     };
   }
+
+  factory LeituraModel.fromMap(Map<String, dynamic> data) {
+    return LeituraModel(
+      equipamento: data['equipamento']?.toString() ?? '',
+      codigoFerramenta: data['codigoFerramenta']?.toString() ?? '',
+      numeroLeitura: data['numeroLeitura'] is int
+          ? data['numeroLeitura']
+          : int.tryParse(data['numeroLeitura']?.toString() ?? '') ?? 0,
+      valorCapturado: data['valorCapturado']?.toString() ?? '',
+      dataHoraCaptura: DateTime.tryParse(data['dataHoraCaptura']?.toString() ?? '') ?? DateTime.now(),
+    );
+  }
 }

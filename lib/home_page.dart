@@ -3,8 +3,10 @@ import 'package:celacantoapp/editar_banco_dados_page.dart';
 import 'package:flutter/material.dart';
 import 'auth_service.dart'; // Importante para reconhecer o PerfilUsuario
 import 'cadastro_page.dart';
-import 'novo_projeto_page.dart';
+import 'campo_relatorio_page.dart';
+import 'elaboracao_relatorio_page.dart';
 import 'perfil_page.dart';
+import 'projetos_realizados_page.dart';
 import 'qr_code_scanner_page.dart';
 import 'gestao_ferramentas_page.dart';
 import 'captura_ocr_page.dart'; // Import da nova página de captura OCR (Teste)
@@ -29,6 +31,16 @@ class HomePage extends StatelessWidget {
   // Regra de negócio exclusiva para os novos botões: Apenas Admin pode acessar
   bool get _ehAdmin {
     return perfil == PerfilUsuario.admin;
+  }
+
+  // Elaboração do relatório prévio: equipe de redação/admin
+  bool get _temAcessoElaboracao {
+    return perfil == PerfilUsuario.redator || perfil == PerfilUsuario.admin;
+  }
+
+  // Utilização do relatório em campo: técnico/admin
+  bool get _temAcessoTecnico {
+    return perfil == PerfilUsuario.tecnico || perfil == PerfilUsuario.admin;
   }
 
   @override
@@ -73,15 +85,15 @@ class HomePage extends StatelessWidget {
                         mainAxisAlignment: MainAxisAlignment.center,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          // Botão: Novo Projeto (Livre)
+                          // Botão 1: Elaboração do Relatório (redator/admin monta a estrutura pré-campo)
                           _buildMenuButton(
-                            label: 'Novo Projeto',
-                            icon: Icons.add_box_outlined,
-                            isEnable: true,
+                            label: 'Elaboração do Relatório',
+                            icon: Icons.fact_check_outlined,
+                            isEnable: _temAcessoElaboracao,
                             onPressed: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => NovoProjetoPage(
+                                MaterialPageRoute(builder: (context) => ElaboracaoRelatorioPage(
                                   emailLogado: emailUsuario,
                                 )),
                               );
@@ -89,13 +101,35 @@ class HomePage extends StatelessWidget {
                           ),
                           const SizedBox(height: 12),
 
-                          // Botão: Editar Projeto (Restrito)
+                          // Botão 2: Utilização do Relatório (técnico/admin executam em campo)
                           _buildMenuButton(
-                            label: 'Editar Projeto',
+                            label: 'Utilização do Relatório',
                             icon: Icons.edit_note_outlined,
-                            isEnable: _temAcessoAvancado,
+                            isEnable: _temAcessoTecnico,
                             onPressed: () {
-                              _mostrarAlerta(context, 'Abrindo: Editar Projeto');
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => CampoRelatorioPage(
+                                  emailLogado: emailUsuario,
+                                )),
+                              );
+                            },
+                          ),
+                          const SizedBox(height: 12),
+
+                          // Botão 3: Projetos Realizados (consulta somente leitura, livre para todos os perfis)
+                          _buildMenuButton(
+                            label: 'Projetos Realizados',
+                            icon: Icons.folder_copy_outlined,
+                            isEnable: true,
+                            onPressed: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(builder: (context) => ProjetosRealizadosPage(
+                                  emailLogado: emailUsuario,
+                                  perfil: perfil,
+                                )),
+                              );
                             },
                           ),
                           const SizedBox(height: 12),

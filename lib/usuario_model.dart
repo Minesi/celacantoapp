@@ -6,7 +6,7 @@ class UsuarioModel {
   final String nome;            // Mantendo a variável 'nome' do seu SQLite
   final String cpf;             // Mantendo a variável 'cpf' do seu SQLite
   final String email;           // Mantendo a variável 'email' do seu SQLite
-  final PerfilUsuario perfil;   // Mantendo seu enum (operador, supervisor, admin)
+  final PerfilUsuario perfil;   // Mantendo seu enum (admin, tecnico, supervisor, redator)
   final String dominioEmpresa;  // O domínio isolador extraído do e-mail (@empresa.com)
 
   UsuarioModel({
@@ -25,7 +25,7 @@ class UsuarioModel {
       'nome': nome,
       'cpf': cpf,
       'email': email,
-      'perfil': perfil.name, // Salva como String ('admin', 'operador'...)
+      'perfil': perfil.name, // Salva como String ('admin', 'tecnico'...)
       'dominio_empresa': dominioEmpresa,
     };
   }
@@ -33,11 +33,11 @@ class UsuarioModel {
   // Reconstrói o Objeto a partir de um documento do Firestore
   factory UsuarioModel.fromFirestore(Map<String, dynamic> data, String id) {
     // Tratamento para converter a String de volta para o seu Enum PerfilUsuario
-    PerfilUsuario perfilConvertido = PerfilUsuario.operador;
+    PerfilUsuario perfilConvertido = PerfilUsuario.tecnico;
     if (data['perfil'] != null) {
       perfilConvertido = PerfilUsuario.values.firstWhere(
         (p) => p.name == data['perfil'],
-        orElse: () => PerfilUsuario.operador,
+        orElse: () => PerfilUsuario.tecnico,
       );
     }
 

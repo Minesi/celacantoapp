@@ -5,4 +5,6 @@ class FirestoreColecoes {
   static const String empresas = 'empresas';
   static const String instrumentos = 'instrumentos';
   static const String projetos = 'projetos';
+  static const String sistemas = 'sistemas';
+  static const String testesCatalogo = 'testes_catalogo';
 }

@@ -28,7 +28,7 @@ class _CadastroPageState extends State<CadastroPage> {
   final _senhaController = TextEditingController();
   final _confirmaSenhaController = TextEditingController();
   
-  PerfilUsuario _perfilSelecionado = PerfilUsuario.operador; // Padrão inicial
+  PerfilUsuario _perfilSelecionado = PerfilUsuario.tecnico; // Padrão inicial
 
   // Variáveis para validação em tempo real da senha
   bool _temMinimo8 = false;
@@ -42,12 +42,12 @@ class _CadastroPageState extends State<CadastroPage> {
   void initState() {
     super.initState();
     // --- RESTRIÇÃO DE SEGURANÇA CRÍTICA ---
-    // Impede que operadores acessem ou permaneçam nesta tela.
-    if (widget.perfilLogado == PerfilUsuario.operador) {
+    // Apenas supervisor/admin cadastram usuários; técnico e redator ficam restritos aos seus fluxos.
+    if (!_temAcessoDeCadastro(widget.perfilLogado)) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Acesso negado: Operadores não têm permissão para cadastrar usuários.'),
+            content: Text('Acesso negado: você não tem permissão para cadastrar usuários.'),
             backgroundColor: Colors.red,
           ),
         );
@@ -120,7 +120,7 @@ class _CadastroPageState extends State<CadastroPage> {
         _senhaController.clear();
         _confirmaSenhaController.clear();
         setState(() {
-          _perfilSelecionado = PerfilUsuario.operador;
+          _perfilSelecionado = PerfilUsuario.tecnico;
           _validarSenha();
         });
       } else {
@@ -134,10 +134,14 @@ class _CadastroPageState extends State<CadastroPage> {
     }
   }
 
+  bool _temAcessoDeCadastro(PerfilUsuario perfil) {
+    return perfil == PerfilUsuario.supervisor || perfil == PerfilUsuario.admin;
+  }
+
   @override
   Widget build(BuildContext context) {
-    // Se for operador, renderiza um container vazio enquanto o Navigator.pop remove a tela do fluxo
-    if (widget.perfilLogado == PerfilUsuario.operador) {
+    // Sem permissão, renderiza um container vazio enquanto o Navigator.pop remove a tela do fluxo
+    if (!_temAcessoDeCadastro(widget.perfilLogado)) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 

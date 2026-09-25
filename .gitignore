@@ -47,3 +47,6 @@ app.*.map.json
 # One-off import script credentials/deps (never commit service account keys)
 scripts/import_ferramentas/serviceAccountKey.json
 scripts/import_ferramentas/node_modules/
+
+# Test user credentials
+CREDENCIAIS_TESTE.md

@@ -1,165 +1,202 @@
 // lib/relatorio_service.dart
 import 'dart:convert';
 import 'dart:io';
-import 'package:flutter/foundation.dart'; 
-import 'package:flutter/services.dart' show MethodChannel, PlatformException, rootBundle;
+import 'dart:typed_data';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart' show MethodChannel, PlatformException;
 import 'package:path_provider/path_provider.dart';
-import 'package:archive/archive.dart';
 import 'projeto_model.dart';
-import 'leitura_model.dart';
 
 class RelatorioService {
   static const _canalRelatorios = MethodChannel('celacantoapp/relatorios');
-  // Quantidade de slots {VALOR_N}/{EQUIP_VALOR_N} suportados pelo esquema legado (lista plana)
-  static const int maxSlotsLeituraTemplate = 10;
+  final FirebaseFunctions _functions = FirebaseFunctions.instance;
 
-  // Modelos "agrupados por ferramenta" (ex: HVAC) reservam 1 linha por ferramenta distinta
-  // e um número fixo de colunas de leitura por linha (ex: {VALOR_2_1}, {VALOR_2_2})
-  static const int maxLinhasFerramentaTemplate = 6;
-  static const int maxLeiturasPorLinhaTemplate = 2;
-
-  String assetPathParaProjeto(String tipoProjeto) {
+  /// ID do template salvo no Storage em `templates/<templateId>.docx` (ver Cloud Function
+  /// `gerarRelatorioDocx` em functions/index.js).
+  String templateIdParaProjeto(String tipoProjeto) {
     final tipoNormalizado = tipoProjeto.trim().toLowerCase();
 
-    if (tipoNormalizado.contains('fluxo')) {
-      return 'assets/templates/fluxo_laminar.docx';
-    }
-    if (tipoNormalizado.contains('ar comprimido')) {
-      return 'assets/templates/modelo_ar_comprimido.docx';
-    }
-    if (tipoNormalizado.contains('cabine')) {
-      return 'assets/templates/modelo_cabine_exaustao.docx';
-    }
-    if (tipoNormalizado.contains('hvac')) {
-      return 'assets/templates/modelo_relatorio_hvac.docx';
-    }
-    return 'assets/templates/modelo_teste.docx';
+    if (tipoNormalizado.contains('fluxo')) return 'fluxo_laminar';
+    if (tipoNormalizado.contains('ar comprimido')) return 'modelo_ar_comprimido';
+    if (tipoNormalizado.contains('cabine')) return 'modelo_cabine_exaustao';
+    if (tipoNormalizado.contains('hvac')) return 'modelo_relatorio_hvac';
+    return 'modelo_teste';
   }
 
-  // O template HVAC organiza as leituras em linhas fixas por ferramenta (não em lista plana)
-  bool _usaModeloAgrupadoPorFerramenta(String tipoProjeto) {
-    return tipoProjeto.trim().toLowerCase().contains('hvac');
+  /// Mantido por compatibilidade com o fluxo legado (assets locais). A geração real do
+  /// .docx agora ocorre na nuvem (ver [gerarRelatorioProjeto]); este caminho só é usado
+  /// para registrar/derivar qual template foi originalmente selecionado.
+  String assetPathParaProjeto(String tipoProjeto) {
+    return 'assets/templates/${templateIdParaProjeto(tipoProjeto)}.docx';
   }
 
-  /// Injeta os dados consolidados do projeto, instrumentos e OCR dentro do template Word.
-  /// Retorna o arquivo gerado, a localização pública e avisos sobre dados que não
-  /// couberam nos slots fixos do template.
+  /// Chama a Cloud Function `gerarRelatorioDocx`, que carrega o template do Storage,
+  /// faz o merge com docxtemplater (loops de salas/handling units incluídos) e devolve a
+  /// URL do .docx gerado. Baixa o arquivo e salva localmente (Downloads/Celacanto).
+  /// Requer conexão — a aprovação normalmente ocorre no escritório; se estiver offline,
+  /// devolve um aviso claro para tentar novamente mais tarde.
   Future<({File? arquivo, String? localizacao, List<String> avisos})> gerarRelatorioProjeto({
     required ProjetoModel projeto,
     required String nomeEmpresa,
-    required String assetTemplatePath, 
+    required String assetTemplatePath,
   }) async {
     final avisos = <String>[];
+    final templateId = _templateIdDoAssetPath(assetTemplatePath);
+
     try {
-      debugPrint('DEBUG ASSET: Iniciando leitura segura do asset: "$assetTemplatePath"');
-      
-      // 1. Carrega os bytes do asset
-      final dadosTemplate = await rootBundle.load(assetTemplatePath);
-      final bytesBrutos = dadosTemplate.buffer.asUint8List(
-        dadosTemplate.offsetInBytes, 
-        dadosTemplate.lengthInBytes
+      final payload = _montarPayloadMerge(projeto: projeto, nomeEmpresa: nomeEmpresa, templateId: templateId);
+      final dados = await _chamarGerarRelatorio(payload);
+
+      final url = dados['url'] as String?;
+      if (url == null || url.isEmpty) {
+        throw Exception('A função de geração não retornou uma URL válida.');
+      }
+
+      final bytesFinais = await _baixarBytes(url);
+      final nomeArquivo = 'Relatorio_${projeto.id.replaceAll(' ', '_')}.docx';
+      return await _salvarNoDispositivo(nomeArquivo, bytesFinais, avisos);
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('Falha ao chamar a função de geração de relatório: ${e.code} - ${e.message}');
+      avisos.add(
+        'Não foi possível gerar o relatório agora (${e.message ?? e.code}). '
+        'Tente novamente quando estiver online — a aprovação normalmente é feita no escritório.',
       );
-
-      // 2. Decodifica a estrutura ZIP do .docx
-      final zipDecoder = ZipDecoder();
-      final Archive arquivoZip = zipDecoder.decodeBytes(bytesBrutos);
-
-      final novoZipEncoder = ZipEncoder();
-      final Archive novoWordZip = Archive();
-
-      // 3. Varre a estrutura interna para aplicar as substituições no XML principal
-      for (final ArchiveFile arquivoInterno in arquivoZip) {
-        dynamic dadosArquivo = arquivoInterno.content;
-
-        if (arquivoInterno.name == 'word/document.xml') {
-          String conteudoXml = utf8.decode(dadosArquivo as List<int>);
-
-          // O Word costuma fragmentar um mesmo placeholder ({TAG}) em múltiplas runs de
-          // formatação; sem isso, replaceAll nunca encontra o texto e a tag some do relatório.
-          conteudoXml = _normalizarTagsFragmentadas(conteudoXml);
-
-          // Substições de Cabeçalho Geral do Escopo
-          conteudoXml = conteudoXml.replaceAll('{PROJETO}', _escaparXml(projeto.tipoProjeto));
-          conteudoXml = conteudoXml.replaceAll('{EMPRESA}', _escaparXml(nomeEmpresa));
-          conteudoXml = conteudoXml.replaceAll('{CNPJ}', _escaparXml(projeto.cnpjEmpresa));
-          conteudoXml = conteudoXml.replaceAll('{DATA_GERACAO}', _obterDataAtualFormatada());
-
-          // Substituição Dinâmica de Ativos/Instrumentos Escaneados
-          // Varre o mapa de ferramentas vinculadas por QR Code (ex: 'Anemômetro', 'Manômetro Diferencial')
-          projeto.ferramentasEscaneadas.forEach((nomeFerramenta, instrumento) {
-            // Criamos tags baseadas no nome da ferramenta para evitar colisão caso use mais de uma
-            // Exemplo no Word: {TAG_ANEMÔMETRO}, {CERTIFICADO_MANÔMETRO_DIFERENCIAL}
-            // Tentamos as variantes com e sem acento pois os templates não seguem um padrão único
-            final sufixoComAcento = nomeFerramenta.toUpperCase().replaceAll(' ', '_');
-            final sufixoSemAcento = _removerAcentos(sufixoComAcento);
-
-            for (final sufixoTag in {sufixoComAcento, sufixoSemAcento}) {
-              conteudoXml = conteudoXml.replaceAll('{EQUIPAMENTO_$sufixoTag}', _escaparXml(instrumento.tipo));
-              conteudoXml = conteudoXml.replaceAll('{TAG_$sufixoTag}', _escaparXml(instrumento.tag));
-              conteudoXml = conteudoXml.replaceAll('{SERIE_$sufixoTag}', _escaparXml(instrumento.numeroSerie));
-              conteudoXml = conteudoXml.replaceAll('{CERTIFICADO_$sufixoTag}', _escaparXml(instrumento.numeroCertificado));
-              conteudoXml = conteudoXml.replaceAll('{VALIDADE_$sufixoTag}', _escaparXml(instrumento.validade));
-            }
-          });
-
-          if (_usaModeloAgrupadoPorFerramenta(projeto.tipoProjeto)) {
-            conteudoXml = _preencherLeiturasAgrupadasPorFerramenta(conteudoXml, projeto.leiturasOcr, avisos);
-          } else {
-            conteudoXml = _preencherLeiturasEmListaPlana(conteudoXml, projeto.leiturasOcr, avisos);
-          }
-
-          dadosArquivo = utf8.encode(conteudoXml);
-        }
-
-        novoWordZip.addFile(ArchiveFile(
-          arquivoInterno.name,
-          dadosArquivo.length,
-          dadosArquivo,
-        ));
-      }
-
-      // 4. Compacta o novo documento final modificado
-      final listaBytesFinais = novoZipEncoder.encode(novoWordZip);
-
-      if (listaBytesFinais != null) {
-        final nomeArquivoSanitizado = projeto.id.replaceAll(' ', '_');
-        final nomeArquivo = 'Relatorio_$nomeArquivoSanitizado.docx';
-        final bytesFinais = listaBytesFinais;
-
-        if (Platform.isAndroid) {
-          final diretorioTemporario = await getApplicationDocumentsDirectory();
-          final arquivoTemporario = File('${diretorioTemporario.path}/$nomeArquivo');
-          await arquivoTemporario.writeAsBytes(bytesFinais, flush: true);
-
-          final uriDownloads = await _canalRelatorios.invokeMethod<String>(
-            'salvarNoDownloads',
-            {'nomeArquivo': nomeArquivo, 'bytes': bytesFinais},
-          );
-          if (uriDownloads == null) {
-            throw FileSystemException('Não foi possível salvar o relatório na pasta Downloads.');
-          }
-          debugPrint('DEBUG SUCCESS: Documento salvo em Downloads: $uriDownloads');
-          return (arquivo: arquivoTemporario, localizacao: uriDownloads, avisos: avisos);
-        }
-
-        final diretorioDownloads = await getDownloadsDirectory();
-        if (diretorioDownloads == null) {
-          throw FileSystemException('A pasta Downloads não está disponível nesta plataforma.');
-        }
-        final subdiretorio = Directory('${diretorioDownloads.path}/Celacanto');
-        if (!await subdiretorio.exists()) await subdiretorio.create(recursive: true);
-        final arquivoFinal = File('${subdiretorio.path}/$nomeArquivo');
-        
-        // 6. Grava fisicamente no disco de forma assíncrona
-        await arquivoFinal.writeAsBytes(bytesFinais, flush: true);
-        
-        debugPrint('DEBUG SUCCESS: Documento salvo em Downloads: ${arquivoFinal.path}');
-        return (arquivo: arquivoFinal, localizacao: arquivoFinal.path, avisos: avisos);
-      }
-      
       return (arquivo: null, localizacao: null, avisos: avisos);
     } catch (e) {
-      debugPrint('Erro ao gerar relatório unificado no Word: $e');
+      debugPrint('Falha ao gerar relatório via nuvem: $e');
+      avisos.add('Não foi possível gerar o relatório agora (sem conexão?). Tente novamente quando estiver online.');
+      return (arquivo: null, localizacao: null, avisos: avisos);
+    }
+  }
+
+  /// No Windows/Linux o plugin cloud_functions não tem implementação nativa: usa o protocolo
+  /// HTTPS de callable (POST {data} com ID token) direto na função.
+  Future<Map<String, dynamic>> _chamarGerarRelatorio(Map<String, dynamic> payload) async {
+    if (kIsWeb || !(Platform.isWindows || Platform.isLinux)) {
+      final resultado = await _functions.httpsCallable('gerarRelatorioDocx').call(payload);
+      return Map<String, dynamic>.from(resultado.data as Map);
+    }
+
+    final usuario = FirebaseAuth.instance.currentUser;
+    if (usuario == null) throw Exception('Usuário não autenticado.');
+    final token = await usuario.getIdToken();
+    final projectId = Firebase.app().options.projectId;
+
+    final client = HttpClient();
+    try {
+      final request = await client.postUrl(Uri.https('us-central1-$projectId.cloudfunctions.net', '/gerarRelatorioDocx'));
+      request.headers.contentType = ContentType.json;
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+      request.write(jsonEncode({'data': payload}));
+      final response = await request.close().timeout(const Duration(seconds: 120));
+      final texto = await response.transform(utf8.decoder).join();
+      final Map<String, dynamic> corpo;
+      try {
+        corpo = jsonDecode(texto) as Map<String, dynamic>;
+      } on FormatException {
+        debugPrint('gerarRelatorioDocx respondeu HTTP ${response.statusCode} sem JSON: '
+            '${texto.length > 300 ? texto.substring(0, 300) : texto}');
+        throw FirebaseFunctionsException(code: 'http-${response.statusCode}', message: 'HTTP ${response.statusCode}');
+      }
+      if (response.statusCode != 200 || corpo['error'] != null) {
+        final erro = corpo['error'] as Map<String, dynamic>? ?? {};
+        throw FirebaseFunctionsException(
+          code: erro['status']?.toString().toLowerCase() ?? 'http-${response.statusCode}',
+          message: erro['message']?.toString() ?? 'HTTP ${response.statusCode}',
+        );
+      }
+      return Map<String, dynamic>.from(corpo['result'] as Map);
+    } finally {
+      client.close();
+    }
+  }
+
+  String _templateIdDoAssetPath(String assetPath) {
+    final nomeArquivo = assetPath.split('/').last;
+    return nomeArquivo.replaceAll('.docx', '');
+  }
+
+  /// Monta o payload enviado à Cloud Function: dados escalares do projeto + salas/handling
+  /// units estruturados + instrumentos escaneados + leituras (compat. com os templates atuais).
+  Map<String, dynamic> _montarPayloadMerge({
+    required ProjetoModel projeto,
+    required String nomeEmpresa,
+    required String templateId,
+  }) {
+    return {
+      'templateId': templateId,
+      'projeto': {
+        'id': projeto.id,
+        'tipoProjeto': projeto.tipoProjeto,
+        'cnpjEmpresa': projeto.cnpjEmpresa,
+        'nomeEmpresa': nomeEmpresa,
+        'sistemaNome': projeto.sistemaId,
+        'area': projeto.area,
+        'salas': projeto.salas.map((s) => s.toMap()).toList(),
+        'handlingUnits': projeto.handlingUnits.map((h) => h.toMap()).toList(),
+        'ferramentasEscaneadas': projeto.ferramentasEscaneadas.map(
+          (tipo, instrumentos) => MapEntry(tipo, instrumentos.map((i) => i.toMap()).toList()),
+        ),
+        'leiturasOcr': projeto.leiturasOcr.map((l) => l.toMap()).toList(),
+      },
+    };
+  }
+
+  Future<List<int>> _baixarBytes(String url) async {
+    final httpClient = HttpClient();
+    try {
+      final request = await httpClient.getUrl(Uri.parse(url));
+      final response = await request.close();
+      final bytes = BytesBuilder();
+      await for (final chunk in response) {
+        bytes.add(chunk);
+      }
+      return bytes.takeBytes();
+    } finally {
+      httpClient.close();
+    }
+  }
+
+  Future<({File? arquivo, String? localizacao, List<String> avisos})> _salvarNoDispositivo(
+    String nomeArquivo,
+    List<int> bytesFinais,
+    List<String> avisos,
+  ) async {
+    try {
+      if (Platform.isAndroid) {
+        final diretorioTemporario = await getApplicationDocumentsDirectory();
+        final arquivoTemporario = File('${diretorioTemporario.path}/$nomeArquivo');
+        await arquivoTemporario.writeAsBytes(bytesFinais, flush: true);
+
+        final uriDownloads = await _canalRelatorios.invokeMethod<String>(
+          'salvarNoDownloads',
+          {'nomeArquivo': nomeArquivo, 'bytes': bytesFinais},
+        );
+        if (uriDownloads == null) {
+          throw FileSystemException('Não foi possível salvar o relatório na pasta Downloads.');
+        }
+        debugPrint('DEBUG SUCCESS: Documento salvo em Downloads: $uriDownloads');
+        return (arquivo: arquivoTemporario, localizacao: uriDownloads, avisos: avisos);
+      }
+
+      final diretorioDownloads = await getDownloadsDirectory();
+      if (diretorioDownloads == null) {
+        throw FileSystemException('A pasta Downloads não está disponível nesta plataforma.');
+      }
+      final subdiretorio = Directory('${diretorioDownloads.path}/Celacanto');
+      if (!await subdiretorio.exists()) await subdiretorio.create(recursive: true);
+      final arquivoFinal = File('${subdiretorio.path}/$nomeArquivo');
+
+      await arquivoFinal.writeAsBytes(bytesFinais, flush: true);
+
+      debugPrint('DEBUG SUCCESS: Documento salvo em Downloads: ${arquivoFinal.path}');
+      return (arquivo: arquivoFinal, localizacao: arquivoFinal.path, avisos: avisos);
+    } catch (e) {
+      debugPrint('Erro ao salvar relatório gerado no dispositivo: $e');
+      avisos.add('Relatório gerado na nuvem, mas houve falha ao salvá-lo neste dispositivo: $e');
       return (arquivo: null, localizacao: null, avisos: avisos);
     }
   }
@@ -183,185 +220,5 @@ class RelatorioService {
       debugPrint('Falha ao abrir relatório: $e');
     }
     return false;
-  }
-
-  /// Esquema legado: lista plana, 1 slot global por leitura ({VALOR_N}/{EQUIP_VALOR_N}).
-  /// Usado por templates como fluxo_laminar/modelo_teste, que não agrupam por ferramenta.
-  String _preencherLeiturasEmListaPlana(String conteudoXml, List<LeituraModel> leiturasOcr, List<String> avisos) {
-    for (int i = 0; i < leiturasOcr.length; i++) {
-      final leitura = leiturasOcr[i];
-      conteudoXml = conteudoXml.replaceAll('{VALOR_${i + 1}}', _escaparXml(leitura.valorCapturado));
-      conteudoXml = conteudoXml.replaceAll('{EQUIP_VALOR_${i + 1}}', _escaparXml(leitura.equipamento));
-    }
-
-    // Limpa tags sobressalentes caso o template tenha mais slots de leitura do que o coletado
-    for (int i = leiturasOcr.length; i < maxSlotsLeituraTemplate; i++) {
-      conteudoXml = conteudoXml.replaceAll('{VALOR_${i + 1}}', '-');
-      conteudoXml = conteudoXml.replaceAll('{EQUIP_VALOR_${i + 1}}', '-');
-    }
-
-    if (leiturasOcr.length > maxSlotsLeituraTemplate) {
-      avisos.add('$maxSlotsLeituraTemplate leituras exibidas de ${leiturasOcr.length} coletadas — as excedentes não aparecem no relatório.');
-    }
-    return conteudoXml;
-  }
-
-  /// Esquema agrupado por ferramenta: 1 linha por ferramenta distinta ({EQUIP_VALOR_R}),
-  /// com até [maxLeiturasPorLinhaTemplate] leituras dessa ferramenta na própria linha
-  /// ({VALOR_R_1}, {VALOR_R_2}, ...), preservando a separação entre ferramentas diferentes.
-  String _preencherLeiturasAgrupadasPorFerramenta(String conteudoXml, List<LeituraModel> leiturasOcr, List<String> avisos) {
-    final ferramentasEmOrdem = <String>[];
-    final leiturasPorFerramenta = <String, List<LeituraModel>>{};
-    for (final leitura in leiturasOcr) {
-      final lista = leiturasPorFerramenta.putIfAbsent(leitura.equipamento, () {
-        ferramentasEmOrdem.add(leitura.equipamento);
-        return [];
-      });
-      lista.add(leitura);
-    }
-
-    for (int linha = 0; linha < maxLinhasFerramentaTemplate; linha++) {
-      final numeroLinha = linha + 1;
-      final temFerramentaNestaLinha = linha < ferramentasEmOrdem.length;
-      final nomeFerramentaLinha = temFerramentaNestaLinha ? ferramentasEmOrdem[linha] : null;
-      final leiturasDaLinha = nomeFerramentaLinha != null ? leiturasPorFerramenta[nomeFerramentaLinha]! : const <LeituraModel>[];
-
-      conteudoXml = conteudoXml.replaceAll(
-        '{EQUIP_VALOR_$numeroLinha}',
-        nomeFerramentaLinha != null ? _escaparXml(nomeFerramentaLinha) : '-',
-      );
-
-      for (int n = 0; n < maxLeiturasPorLinhaTemplate; n++) {
-        final valor = n < leiturasDaLinha.length ? _escaparXml(leiturasDaLinha[n].valorCapturado) : '-';
-        conteudoXml = conteudoXml.replaceAll('{VALOR_${numeroLinha}_${n + 1}}', valor);
-      }
-
-      if (leiturasDaLinha.length > maxLeiturasPorLinhaTemplate) {
-        avisos.add('$nomeFerramentaLinha: ${leiturasDaLinha.length} leituras capturadas, mas o modelo só exibe $maxLeiturasPorLinhaTemplate por ferramenta.');
-      }
-    }
-
-    if (ferramentasEmOrdem.length > maxLinhasFerramentaTemplate) {
-      final excedentes = ferramentasEmOrdem.skip(maxLinhasFerramentaTemplate).join(', ');
-      avisos.add('O modelo só exibe $maxLinhasFerramentaTemplate ferramentas; não aparecem no relatório: $excedentes.');
-    }
-
-    return conteudoXml;
-  }
-
-  /// Reconstrói placeholders `{TAG}` que o Word fragmentou em múltiplas runs de texto
-  /// (`<w:t>`) por causa de edições/formatação, unindo-os em uma única run antes das
-  /// substituições simples via replaceAll — do contrário a tag nunca é encontrada.
-  String _normalizarTagsFragmentadas(String xml) {
-    // Teto de segurança: se uma "{" nunca fechar dentro desses limites, é tratada como
-    // texto solto (não uma tag fragmentada) para não apagar conteúdo real do documento
-    // caso o template tenha uma chave desbalanceada/typo.
-    const maxRunsPendentes = 20;
-    const maxTamanhoBuffer = 120;
-
-    final regexRun = RegExp(r'<w:t\b([^>]*)>([^<]*)</w:t>');
-    final matches = regexRun.allMatches(xml).toList();
-    if (matches.isEmpty) return xml;
-
-    final novosTextos = List<String?>.filled(matches.length, null);
-
-    String? bufferPendente;
-    int? indiceInicioPendente;
-    String? prefixoAntesDaChave;
-
-    void abortarPendencia(int ateIndice) {
-      // Desiste da fusão: restaura todas as runs percorridas sem nenhuma alteração
-      if (indiceInicioPendente != null) {
-        for (int k = indiceInicioPendente!; k <= ateIndice; k++) {
-          novosTextos[k] = null;
-        }
-      }
-      bufferPendente = null;
-      indiceInicioPendente = null;
-      prefixoAntesDaChave = null;
-    }
-
-    for (int i = 0; i < matches.length; i++) {
-      final texto = matches[i].group(2)!;
-
-      if (bufferPendente == null) {
-        final ultimaAbertura = texto.lastIndexOf('{');
-        final ultimoFechamento = texto.lastIndexOf('}');
-        if (ultimaAbertura >= 0 && ultimaAbertura > ultimoFechamento) {
-          // Esta run termina com uma "{" que não fecha nela mesma: possível tag fragmentada
-          prefixoAntesDaChave = texto.substring(0, ultimaAbertura);
-          bufferPendente = texto.substring(ultimaAbertura);
-          indiceInicioPendente = i;
-        }
-        continue;
-      }
-
-      bufferPendente = bufferPendente! + texto;
-
-      if (bufferPendente!.length > maxTamanhoBuffer || (i - indiceInicioPendente!) > maxRunsPendentes) {
-        // "{" desbalanceada (typo no template ou texto solto): não mexe em nada
-        abortarPendencia(i);
-        continue;
-      }
-
-      final fechamentoIdx = bufferPendente!.indexOf('}');
-      if (fechamentoIdx == -1) {
-        // Ainda não fechou: esta run inteira faz parte do texto fragmentado
-        novosTextos[i] = '';
-        continue;
-      }
-
-      final tagCompleta = bufferPendente!.substring(0, fechamentoIdx + 1);
-      final tamanhoRestante = bufferPendente!.length - (fechamentoIdx + 1);
-      final restanteNestaRun = tamanhoRestante > 0 ? texto.substring(texto.length - tamanhoRestante) : '';
-
-      novosTextos[indiceInicioPendente!] = '$prefixoAntesDaChave$tagCompleta';
-      novosTextos[i] = restanteNestaRun;
-
-      bufferPendente = null;
-      indiceInicioPendente = null;
-      prefixoAntesDaChave = null;
-    }
-
-    final sb = StringBuffer();
-    int cursor = 0;
-    for (int i = 0; i < matches.length; i++) {
-      final m = matches[i];
-      sb.write(xml.substring(cursor, m.start));
-      final textoFinal = novosTextos[i] ?? m.group(2)!;
-      sb.write('<w:t${m.group(1)}>$textoFinal</w:t>');
-      cursor = m.end;
-    }
-    sb.write(xml.substring(cursor));
-    return sb.toString();
-  }
-
-  /// Remove acentos comuns em português para casar com templates que usam tags sem acentuação
-  String _removerAcentos(String texto) {
-    const comAcento = 'ÁÀÂÃÄÉÈÊËÍÌÎÏÓÒÔÕÖÚÙÛÜÇ';
-    const semAcento = 'AAAAAEEEEIIIIOOOOOUUUUC';
-    var resultado = texto;
-    for (int i = 0; i < comAcento.length; i++) {
-      resultado = resultado.replaceAll(comAcento[i], semAcento[i]);
-    }
-    return resultado;
-  }
-
-  String _obterDataAtualFormatada() {
-    final agora = DateTime.now();
-    final dia = agora.day.toString().padLeft(2, '0');
-    final mes = agora.month.toString().padLeft(2, '0');
-    final ano = agora.year;
-    return "$dia/$mes/$ano";
-  }
-
-  /// Escapa caracteres reservados do XML para não corromper o document.xml do .docx
-  String _escaparXml(String texto) {
-    return texto
-        .replaceAll('&', '&amp;')
-        .replaceAll('<', '&lt;')
-        .replaceAll('>', '&gt;')
-        .replaceAll('"', '&quot;')
-        .replaceAll("'", '&apos;');
   }
 }

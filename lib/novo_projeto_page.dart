@@ -14,6 +14,7 @@ import 'relatorio_service.dart';
 import 'database_helper.dart';
 import 'auth_service.dart';
 import 'firestore_colecoes.dart';
+import 'supervisor_override_dialog.dart';
 import 'validadores.dart';
 
 class NovoProjetoPage extends StatefulWidget {
@@ -173,85 +174,17 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
     }
   }
 
-  void _solicitarLiberacaoSupervisor(String tipoFerramenta, InstrumentoModel instrumento) {
-    final emailSupController = TextEditingController();
-    final senhaSupController = TextEditingController();
-
-    showDialog(
+  void _solicitarLiberacaoSupervisor(String tipoFerramenta, InstrumentoModel instrumento) async {
+    final autorizado = await solicitarLiberacaoSupervisor(
       context: context,
-      barrierDismissible: false,
-      builder: (context) {
-        return AlertDialog(
-          title: const Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, color: Colors.amber),
-              SizedBox(width: 8),
-              Text('Validade Expirada', style: TextStyle(fontSize: 18)),
-            ],
-          ),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('A ferramenta ${instrumento.tag} está com a calibração vencida (${instrumento.validade}).\n\nInsira as credenciais de um Supervisor para autorizar o uso especial:'),
-              const SizedBox(height: 16),
-              TextField(
-                controller: emailSupController,
-                keyboardType: TextInputType.emailAddress,
-                decoration: const InputDecoration(labelText: 'E-mail do Supervisor', prefixIcon: Icon(Icons.person)),
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: senhaSupController,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: 'Senha de Liberação', prefixIcon: Icon(Icons.lock)),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(context).pop(),
-              child: const Text('Cancelar', style: TextStyle(color: Colors.grey)),
-            ),
-            ElevatedButton(
-              onPressed: () async {
-                showDialog(
-                  context: context,
-                  barrierDismissible: false,
-                  builder: (ctx) => const Center(child: CircularProgressIndicator()),
-                );
+      titulo: 'Validade Expirada',
+      mensagem: 'A ferramenta ${instrumento.tag} está com a calibração vencida (${instrumento.validade}).\n\n'
+          'Insira as credenciais de um Supervisor para autorizar o uso especial:',
+    );
 
-                Map<String, dynamic>? dadosSup = await _authService.buscarDadosUsuario(emailSupController.text.trim());
-                
-                if (dadosSup != null && (dadosSup['perfil'] == 'supervisor' || dadosSup['perfil'] == 'admin')) {
-                  if (!context.mounted) return;
-                  Navigator.of(context).pop(); 
-                  Navigator.of(context).pop(); 
-
-                  setState(() {
-                    _ferramentasEscaneadasSucesso[tipoFerramenta] = instrumento;
-                  });
-
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('Uso de ${instrumento.tag} liberado pelo Supervisor!'), backgroundColor: Colors.orange),
-                  );
-                } else {
-                  if (!context.mounted) return;
-                  Navigator.of(context).pop(); 
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Credenciais inválidas ou usuário sem nível de Supervisor!'), backgroundColor: Colors.red),
-                  );
-                }
-              },
-              style: ElevatedButton.styleFrom(backgroundColor: Colors.amber[800]),
-              child: const Text('Autorizar Uso', style: TextStyle(color: Colors.white)),
-            ),
-          ],
-        );
-      },
-    ).then((_) {
-      emailSupController.dispose();
-      senhaSupController.dispose();
+    if (!autorizado) return;
+    setState(() {
+      _ferramentasEscaneadasSucesso[tipoFerramenta] = instrumento;
     });
   }
 
@@ -349,7 +282,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
       cnpjEmpresa: _empresaSelecionadaDadosObjeto!.cnpj,
       tipoProjeto: _projetoSelecionado!,
       ferramentasRequeridas: _ferramentasRequeridasAtuais,
-      ferramentasEscaneadas: Map<String, InstrumentoModel>.from(_ferramentasEscaneadasSucesso),
+      ferramentasEscaneadas: _ferramentasEscaneadasSucesso.map((tipo, instrumento) => MapEntry(tipo, [instrumento])),
       leiturasOcr: List<LeituraModel>.from(_leiturasCapturadasOcr),
     );
 
@@ -359,7 +292,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
         'cnpjEmpresa': novoProjetoCompletoObjeto.cnpjEmpresa,
         'tipoProjeto': novoProjetoCompletoObjeto.tipoProjeto,
         'ferramentasRequeridas': novoProjetoCompletoObjeto.ferramentasRequeridas,
-        'ferramentasEscaneadas': novoProjetoCompletoObjeto.ferramentasEscaneadas.map((k, v) => MapEntry(k, v.toMap())),
+        'ferramentasEscaneadas': novoProjetoCompletoObjeto.ferramentasEscaneadas.map((k, v) => MapEntry(k, v.map((i) => i.toMap()).toList())),
         'leiturasOcr': novoProjetoCompletoObjeto.leiturasOcr.map((l) => l.toMap()).toList(),
         'dataCriacao': DateTime.now().toIso8601String(),
         'operadorResponsavel': widget.emailLogado,
@@ -383,7 +316,7 @@ class _NovoProjetoPageState extends State<NovoProjetoPage> {
         'cnpjEmpresa': novoProjetoCompletoObjeto.cnpjEmpresa,
         'tipoProjeto': novoProjetoCompletoObjeto.tipoProjeto,
         'ferramentasRequeridas': novoProjetoCompletoObjeto.ferramentasRequeridas,
-        'ferramentasEscaneadas': novoProjetoCompletoObjeto.ferramentasEscaneadas.map((k, v) => MapEntry(k, v.toMap())),
+        'ferramentasEscaneadas': novoProjetoCompletoObjeto.ferramentasEscaneadas.map((k, v) => MapEntry(k, v.map((i) => i.toMap()).toList())),
         'leiturasOcr': novoProjetoCompletoObjeto.leiturasOcr.map((l) => l.toMap()).toList(),
         'dataCriacao': DateTime.now().toIso8601String(),
         'operadorResponsavel': widget.emailLogado,
