@@ -17,6 +17,12 @@ import 'validacao_ensaio_service.dart';
 typedef CapturadorFotoEvidencia =
     Future<String?> Function(BuildContext context);
 
+typedef EnviadorEvidencia =
+    Future<String> Function({
+      required String caminhoArquivo,
+      required String caminhoStorage,
+    });
+
 const _estadosContagem = ['repouso', 'operacao'];
 
 class ResultadoExecucaoEnsaio {
@@ -45,6 +51,7 @@ class ExecucaoEnsaioPage extends StatefulWidget {
   final ExecucaoProjetoService projetoService;
   final Map<String, List<InstrumentoModel>> ferramentasJaEscaneadas;
   final CapturadorFotoEvidencia? capturadorFoto;
+  final EnviadorEvidencia? enviarEvidencia;
 
   const ExecucaoEnsaioPage({
     super.key,
@@ -61,6 +68,7 @@ class ExecucaoEnsaioPage extends StatefulWidget {
     required this.projetoService,
     required this.ferramentasJaEscaneadas,
     this.capturadorFoto,
+    this.enviarEvidencia,
   });
 
   @override
@@ -82,6 +90,7 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
   String _estadoContagem = 'repouso';
   String? _fotoEvidenciaUrl;
   bool _salvando = false;
+  bool _enviandoFoto = false;
 
   bool get _ehContagemParticulas =>
       widget.ensaio.tipo == TipoEnsaio.contagemParticulas;
@@ -243,7 +252,7 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
     if (path == null) return;
 
     var urlFinal = 'local://$path';
-    if (mounted) setState(() => _fotoEvidenciaUrl = urlFinal);
+    setState(() => _enviandoFoto = true);
     try {
       final caminhoNormalizado = path.toLowerCase();
       final extensao = caminhoNormalizado.endsWith('.png')
@@ -256,7 +265,8 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
       final caminhoStorage =
           'evidencias/${widget.projetoId}/${widget.sala.id}/${widget.ensaio.tipo.name}/'
           '${DateTime.now().millisecondsSinceEpoch}$extensao';
-      urlFinal = await enviarImagemStorage(
+      final enviar = widget.enviarEvidencia ?? enviarImagemStorage;
+      urlFinal = await enviar(
         caminhoArquivo: path,
         caminhoStorage: caminhoStorage,
       );
@@ -265,7 +275,10 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
     }
 
     if (!mounted) return;
-    setState(() => _fotoEvidenciaUrl = urlFinal);
+    setState(() {
+      _fotoEvidenciaUrl = urlFinal;
+      _enviandoFoto = false;
+    });
   }
 
   bool get _todosCamposPreenchidos {
@@ -724,10 +737,12 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
             if (_exigeFotoEvidencia) ...[
               const SizedBox(height: 20),
               OutlinedButton.icon(
-                onPressed: _anexarFotoEvidencia,
+                onPressed: _enviandoFoto ? null : _anexarFotoEvidencia,
                 icon: const Icon(Icons.camera_alt_outlined),
                 label: Text(
-                  _fotoEvidenciaUrl == null
+                  _enviandoFoto
+                      ? 'Enviando foto...'
+                      : _fotoEvidenciaUrl == null
                       ? 'Anexar Foto de Evidência'
                       : 'Foto Anexada ✓',
                 ),
@@ -735,7 +750,7 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
             ],
             const SizedBox(height: 28),
             ElevatedButton(
-              onPressed: _salvando ? null : _concluirEnsaio,
+              onPressed: _salvando || _enviandoFoto ? null : _concluirEnsaio,
               style: ElevatedButton.styleFrom(
                 backgroundColor: Colors.blue,
                 padding: const EdgeInsets.symmetric(vertical: 16),
@@ -750,7 +765,9 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
             ),
             const SizedBox(height: 12),
             OutlinedButton(
-              onPressed: _salvando ? null : _encerrarIncompleto,
+              onPressed: _salvando || _enviandoFoto
+                  ? null
+                  : _encerrarIncompleto,
               style: OutlinedButton.styleFrom(
                 padding: const EdgeInsets.symmetric(vertical: 16),
               ),

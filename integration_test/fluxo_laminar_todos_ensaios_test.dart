@@ -9,6 +9,7 @@ import 'dart:ui' as ui;
 import 'package:archive/archive.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -24,6 +25,7 @@ void main() {
 
   const emailTeste = String.fromEnvironment('E2E_EMAIL');
   const senhaTeste = String.fromEnvironment('E2E_SENHA');
+  const e2eAndroid = bool.fromEnvironment('E2E_ANDROID');
   const cnpjEmpresaTeste = '11.222.333/0001-81';
   const nomeFantasiaTeste = 'EMPRESA TESTE AUTOMATIZADO';
   const tipoProjeto = 'Fluxo Laminar';
@@ -36,7 +38,7 @@ void main() {
   final areaTeste = 'AREA FL E2E $marca';
   final repaintKey = GlobalKey();
   final screenshotsDir = Directory(
-    'integration_test/screenshots/fluxo_laminar_todos',
+    '${Directory.systemTemp.path}${Platform.pathSeparator}celacanto-e2e-fluxo-laminar-$marca',
   );
   final passos = <String>[];
   final tags = <String, String>{
@@ -78,10 +80,19 @@ void main() {
   }
 
   Future<void> tocar(WidgetTester tester, Finder finder) async {
+    await waitFor(tester, finder);
     await tester.ensureVisible(finder);
-    await tester.pump();
-    await tester.tap(finder);
-    await aguardar(tester, const Duration(milliseconds: 600));
+    final limite = DateTime.now().add(const Duration(seconds: 10));
+    while (DateTime.now().isBefore(limite)) {
+      await tester.pump();
+      if (finder.hitTestable().evaluate().isNotEmpty) {
+        await tester.tap(finder);
+        await aguardar(tester, const Duration(milliseconds: 600));
+        return;
+      }
+      await Future<void>.delayed(const Duration(milliseconds: 100));
+    }
+    throw TestFailure('Alvo não ficou tocável: $finder');
   }
 
   Future<void> escolherNoDropdown(
@@ -207,7 +218,7 @@ void main() {
     required int realizadosDepois,
     bool exigeFoto = false,
   }) async {
-    await tocar(tester, find.text('$nome (0/1)'));
+    await tocar(tester, find.widgetWithText(ActionChip, '$nome (0/1)'));
     await waitFor(tester, find.text('Concluir Ensaio'));
     await preencherResultado(tester, rotulo, valor);
     await selecionarConforme(tester);
@@ -221,8 +232,10 @@ void main() {
 
   setUpAll(() async {
     if (semCredenciais) return;
-    sqfliteFfiInit();
-    databaseFactory = databaseFactoryFfi;
+    if (Platform.isWindows || Platform.isLinux) {
+      sqfliteFfiInit();
+      databaseFactory = databaseFactoryFfi;
+    }
     if (Firebase.apps.isEmpty) {
       await Firebase.initializeApp(
         options: DefaultFirebaseOptions.currentPlatform,
@@ -290,8 +303,14 @@ void main() {
   testWidgets('Fluxo Laminar: executa os oito ensaios, aprova e emite DOCX', (
     tester,
   ) async {
-    await tester.binding.setSurfaceSize(const Size(1400, 2200));
-    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final alvoDesktop =
+        defaultTargetPlatform == TargetPlatform.windows ||
+        defaultTargetPlatform == TargetPlatform.linux ||
+        defaultTargetPlatform == TargetPlatform.macOS;
+    if (!e2eAndroid && alvoDesktop) {
+      await tester.binding.setSurfaceSize(const Size(1400, 2200));
+      addTearDown(() => tester.binding.setSurfaceSize(null));
+    }
 
     Future<String?> capturadorFotoFake(BuildContext _) async => fotoFake.path;
 
@@ -569,13 +588,11 @@ void main() {
         .map((ponto) => ponto['fotoEvidenciaUrl']?.toString() ?? '')
         .toSet();
     expect(
-      urlsEvidencias.every(
-        (url) {
-          final uri = Uri.tryParse(url);
-          return uri?.scheme == 'https' &&
-              uri?.host == 'firebasestorage.googleapis.com';
-        },
-      ),
+      urlsEvidencias.every((url) {
+        final uri = Uri.tryParse(url);
+        return uri?.scheme == 'https' &&
+            uri?.host == 'firebasestorage.googleapis.com';
+      }),
       isTrue,
       reason: 'Evidências precisam estar publicadas no Firebase Storage',
     );

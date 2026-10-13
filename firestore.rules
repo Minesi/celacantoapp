@@ -88,14 +88,14 @@ service cloud.firestore {
 
       // Redator só altera campos de configuração; técnico só altera campos de resultado;
       // supervisor/admin podem alterar qualquer campo (override).
-      allow update: if resource.data.status != 'aprovado'
-        && historicoNaoReduzido()
-        && (temOverride()
-          || (isRedator() && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['sistemaId', 'area', 'salas', 'handlingUnits', 'ensaiosSelecionados',
-              'tipoProjeto', 'ferramentasRequeridas', 'templateUtilizado']))
-          || (isTecnico() && request.resource.data.diff(resource.data).affectedKeys()
-            .hasOnly(['ferramentasEscaneadas', 'leiturasOcr', 'pontosLeitura', 'status', 'history', 'paralelismo'])));
+      allow update: if temOverride()
+        || (resource.data.status != 'aprovado'
+          && historicoNaoReduzido()
+          && ((isRedator() && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['sistemaId', 'area', 'salas', 'handlingUnits', 'ensaiosSelecionados',
+                'tipoProjeto', 'ferramentasRequeridas', 'templateUtilizado']))
+            || (isTecnico() && request.resource.data.diff(resource.data).affectedKeys()
+              .hasOnly(['ferramentasEscaneadas', 'leiturasOcr', 'pontosLeitura', 'status', 'history', 'paralelismo']))));
 
       allow delete: if false;
     }

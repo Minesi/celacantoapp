@@ -117,6 +117,8 @@ Widget _app({
         ensaio.ferramentasNecessarias.single: [instrumento],
       },
       capturadorFoto: capturadorFoto,
+      enviarEvidencia: ({required caminhoArquivo, required caminhoStorage}) async =>
+          'https://firebasestorage.googleapis.com/v0/b/teste/o/$caminhoStorage',
     ),
   );
 }
