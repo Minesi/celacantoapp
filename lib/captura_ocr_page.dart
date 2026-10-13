@@ -1,4 +1,5 @@
 // lib/captura_ocr_page.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart'; // Motor real do OCR
@@ -15,11 +16,13 @@ class CapturaOcrPage extends StatefulWidget {
   State<CapturaOcrPage> createState() => _CapturaOcrPageState();
 }
 
-class _CapturaOcrPageState extends State<CapturaOcrPage> {
+class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObserver {
   // Teto de leituras aceitas para uma mesma ferramenta em uma única sessão de captura
   static const int maxLeiturasPorFerramenta = 10;
 
   CameraController? _cameraController;
+  bool _cameraSuspensa = false;
+  bool _inicializandoCamera = false;
   bool _mostrarDigitacaoManual = false;
   bool _erroNaCamera = false;
   bool _processandoOcr = false; // Estado visual de carregamento analítico
@@ -35,12 +38,27 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _inicializarCameraDoDispositivo();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      _cameraSuspensa = true;
+      final controller = _cameraController;
+      _cameraController = null;
+      unawaited(controller?.dispose() ?? Future<void>.value());
+    } else if (state == AppLifecycleState.resumed && mounted) {
+      _cameraSuspensa = false;
+      unawaited(_inicializarCameraDoDispositivo());
+    }
+  }
+
+  @override
   void dispose() {
-    _cameraController?.dispose();
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(_cameraController?.dispose() ?? Future<void>.value());
     _ocrManualController.dispose();
     // Em plataformas sem suporte ao ML Kit (ex: Windows/Linux desktop), close()
     // retorna um Future que rejeita com MissingPluginException; sem tratar essa
@@ -53,24 +71,34 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> {
   }
 
   Future<void> _inicializarCameraDoDispositivo() async {
+    if (_inicializandoCamera) return;
+    _inicializandoCamera = true;
     try {
       final listaDeCameras = await availableCameras();
+      if (!mounted || _cameraSuspensa) return;
       if (listaDeCameras.isEmpty) {
         setState(() => _erroNaCamera = true);
         return;
       }
 
-      _cameraController = CameraController(
+      final controller = CameraController(
         listaDeCameras.first,
         ResolutionPreset.high, // Alta definição para o OCR ler números pequenos perfeitamente
         enableAudio: false,
       );
 
-      await _cameraController!.initialize();
-      if (mounted) setState(() {});
+      await controller.initialize();
+      if (!mounted || _cameraSuspensa) {
+        await controller.dispose();
+        return;
+      }
+      _cameraController = controller;
+      setState(() => _erroNaCamera = false);
     } catch (e) {
       debugPrint('Erro ao abrir hardware da câmera: $e');
-      setState(() => _erroNaCamera = true);
+      if (mounted && !_cameraSuspensa) setState(() => _erroNaCamera = true);
+    } finally {
+      _inicializandoCamera = false;
     }
   }
 

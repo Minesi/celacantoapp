@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'auth_service.dart'; // Importante para reconhecer o PerfilUsuario
 import 'cadastro_page.dart';
 import 'campo_relatorio_page.dart';
+import 'database_helper.dart';
 import 'elaboracao_relatorio_page.dart';
 import 'perfil_page.dart';
 import 'projetos_realizados_page.dart';
@@ -14,13 +15,16 @@ import 'captura_ocr_page.dart'; // Import da nova página de captura OCR (Teste)
 class HomePage extends StatelessWidget {
   final PerfilUsuario perfil;
   final String nomeUsuario;
-  final String emailUsuario; // Ajustado de dynamic para String para evitar conflitos de tipo
+  final String
+  emailUsuario; // Ajustado de dynamic para String para evitar conflitos de tipo
+  final Future<String?> Function(BuildContext context)? capturadorFoto;
 
   const HomePage({
     super.key,
     required this.perfil,
     required this.nomeUsuario,
     required this.emailUsuario,
+    this.capturadorFoto,
   });
 
   // Regra de negócio: Apenas Supervisor e Admin podem acessar
@@ -63,7 +67,10 @@ class HomePage extends StatelessWidget {
                     children: [
                       Text(
                         'Olá, $nomeUsuario',
-                        style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          fontSize: 16,
+                        ),
                       ),
                       Text(
                         'Acesso: ${perfil.name.toUpperCase()}',
@@ -73,7 +80,7 @@ class HomePage extends StatelessWidget {
                   ),
                 ],
               ),
-              
+
               // --- CORPO CENTRALIZADO: Menu de Botões ---
               Expanded(
                 child: Center(
@@ -93,9 +100,11 @@ class HomePage extends StatelessWidget {
                             onPressed: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => ElaboracaoRelatorioPage(
-                                  emailLogado: emailUsuario,
-                                )),
+                                MaterialPageRoute(
+                                  builder: (context) => ElaboracaoRelatorioPage(
+                                    emailLogado: emailUsuario,
+                                  ),
+                                ),
                               );
                             },
                           ),
@@ -109,9 +118,12 @@ class HomePage extends StatelessWidget {
                             onPressed: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => CampoRelatorioPage(
-                                  emailLogado: emailUsuario,
-                                )),
+                                MaterialPageRoute(
+                                  builder: (context) => CampoRelatorioPage(
+                                    emailLogado: emailUsuario,
+                                    capturadorFoto: capturadorFoto,
+                                  ),
+                                ),
                               );
                             },
                           ),
@@ -125,10 +137,12 @@ class HomePage extends StatelessWidget {
                             onPressed: () {
                               Navigator.push(
                                 context,
-                                MaterialPageRoute(builder: (context) => ProjetosRealizadosPage(
-                                  emailLogado: emailUsuario,
-                                  perfil: perfil,
-                                )),
+                                MaterialPageRoute(
+                                  builder: (context) => ProjetosRealizadosPage(
+                                    emailLogado: emailUsuario,
+                                    perfil: perfil,
+                                  ),
+                                ),
                               );
                             },
                           ),
@@ -137,8 +151,10 @@ class HomePage extends StatelessWidget {
                           // Botão: Gestão de Ferramentas (Restrito - Supervisor/Admin)
                           _buildMenuButton(
                             label: 'Gestão de Ferramentas',
-                            icon: Icons.construction_outlined, // Ícone seguindo o estilo outline dos demais
-                            isEnable: _temAcessoAvancado,       // Segue a mesma trava de segurança restrita
+                            icon: Icons
+                                .construction_outlined, // Ícone seguindo o estilo outline dos demais
+                            isEnable:
+                                _temAcessoAvancado, // Segue a mesma trava de segurança restrita
                             onPressed: () {
                               Navigator.push(
                                 context,
@@ -198,7 +214,8 @@ class HomePage extends StatelessWidget {
                             _buildMenuButton(
                               label: 'Editar Banco de dados',
                               icon: Icons.storage_outlined,
-                              isEnable: true, // Sempre ativo para quem consegue ver (Admin)
+                              isEnable:
+                                  true, // Sempre ativo para quem consegue ver (Admin)
                               onPressed: () {
                                 Navigator.push(
                                   context,
@@ -210,11 +227,14 @@ class HomePage extends StatelessWidget {
                                     ),
                                   ),
                                 );
-                                _mostrarAlerta(context, 'Abrindo Painel do Banco de Dados');
+                                _mostrarAlerta(
+                                  context,
+                                  'Abrindo Painel do Banco de Dados',
+                                );
                               },
                             ),
                             const SizedBox(height: 12),
-                            
+
                             // Botão: Teste QR Code
                             _buildMenuButton(
                               label: 'Teste QR Code',
@@ -243,15 +263,37 @@ class HomePage extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text(
-                    'v0.1',
-                    style: TextStyle(color: Colors.grey[500], fontWeight: FontWeight.bold, fontSize: 14),
+                  Row(
+                    children: [
+                      Text(
+                        'v1.0.0',
+                        style: TextStyle(
+                          color: Colors.grey[500],
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                      Tooltip(
+                        message: 'Sincronizar projetos pendentes',
+                        child: IconButton(
+                          onPressed: () => _sincronizarProjetos(context),
+                          icon: const Icon(Icons.sync_outlined),
+                        ),
+                      ),
+                    ],
                   ),
                   TextButton.icon(
                     onPressed: () => Navigator.of(context).pop(),
-                    icon: const Icon(Icons.exit_to_app, size: 16, color: Colors.red),
-                    label: const Text('Sair', style: TextStyle(color: Colors.red)),
-                  )
+                    icon: const Icon(
+                      Icons.exit_to_app,
+                      size: 16,
+                      color: Colors.red,
+                    ),
+                    label: const Text(
+                      'Sair',
+                      style: TextStyle(color: Colors.red),
+                    ),
+                  ),
                 ],
               ),
             ],
@@ -259,6 +301,40 @@ class HomePage extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  Future<void> _sincronizarProjetos(BuildContext context) async {
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+
+    try {
+      final sincronizados = await DatabaseHelper()
+          .sincronizarProjetosPendentes();
+      if (!context.mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            sincronizados == 0
+                ? 'Nenhum projeto pendente para sincronizar.'
+                : '$sincronizados projeto(s) sincronizado(s) com sucesso.',
+          ),
+          backgroundColor: Colors.green,
+        ),
+      );
+    } catch (e) {
+      if (!context.mounted) return;
+      Navigator.of(context, rootNavigator: true).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Falha ao sincronizar projetos: $e'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
   }
 
   // Componente de botão reutilizável que aplica o efeito esmaecido
@@ -270,16 +346,19 @@ class HomePage extends StatelessWidget {
   }) {
     return Opacity(
       // Se estiver desativado, aplica opacidade de 35% (efeito esmaecido)
-      opacity: isEnable ? 1.0 : 0.35, 
+      opacity: isEnable ? 1.0 : 0.35,
       child: ElevatedButton.icon(
         onPressed: isEnable ? onPressed : null,
         icon: Icon(icon),
         label: Text(label),
         style: ElevatedButton.styleFrom(
           padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 20),
-          alignment: Alignment.centerLeft, // Alinha o texto à esquerda dentro do botão
+          alignment:
+              Alignment.centerLeft, // Alinha o texto à esquerda dentro do botão
           elevation: isEnable ? 2 : 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
         ),
       ),
     );
@@ -317,14 +396,16 @@ class HomePage extends StatelessWidget {
 
   // --- FUNÇÃO ASSÍNCRONA DO OCR (CORRIGIDA) ---
   Future<void> _abrirLeitorOcr(BuildContext context) async {
-//Abre a tela da câmera do OCR de forma limpa (Modo Teste) e aguarda o retorno
+    //Abre a tela da câmera do OCR de forma limpa (Modo Teste) e aguarda o retorno
     final List<String>? leiturasDetectadas = await Navigator.push<List<String>>(
       context,
-      MaterialPageRoute(builder: (context) => const CapturaOcrPage(nomeFerramenta: 'Teste')),
+      MaterialPageRoute(
+        builder: (context) => const CapturaOcrPage(nomeFerramenta: 'Teste'),
+      ),
     );
     // Se cancelou ou voltou sem ler nada, encerra a função
     if (leiturasDetectadas == null || leiturasDetectadas.isEmpty) return;
-    
+
     // Verificação de segurança para contextos assíncronos
     if (!context.mounted) return;
 
@@ -345,7 +426,11 @@ class HomePage extends StatelessWidget {
           content: SingleChildScrollView(
             child: Text(
               textoDetectado,
-              style: const TextStyle(fontSize: 16, fontFamily: 'Courier', fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                fontSize: 16,
+                fontFamily: 'Courier',
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
           actions: [

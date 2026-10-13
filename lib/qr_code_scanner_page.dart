@@ -1,4 +1,5 @@
 // lib/qr_code_scanner_page.dart
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -12,7 +13,7 @@ class QrCodeScannerPage extends StatefulWidget {
   State<QrCodeScannerPage> createState() => _QrCodeScannerPageState();
 }
 
-class _QrCodeScannerPageState extends State<QrCodeScannerPage> {
+class _QrCodeScannerPageState extends State<QrCodeScannerPage> with WidgetsBindingObserver {
   // Controle para Mobile (Android/iOS)
   mobile.MobileScannerController? _mobileController;
 
@@ -22,6 +23,8 @@ class _QrCodeScannerPageState extends State<QrCodeScannerPage> {
   bool _jaEscaneou = false;
   bool _mostrarDigitacaoManual = false;
   bool _erroNoHardwareDaCamera = false; 
+  bool _cameraSuspensa = false;
+  bool _inicializandoCameraWindows = false;
   final TextEditingController _manualController = TextEditingController();
 
   // Identifica se estamos rodando nativamente no Windows Desktop
@@ -30,31 +33,64 @@ class _QrCodeScannerPageState extends State<QrCodeScannerPage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _inicializarCameraCerta();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.inactive || state == AppLifecycleState.paused) {
+      _cameraSuspensa = true;
+      if (_isWindows) {
+        final controller = _windowsCameraController;
+        _windowsCameraController = null;
+        unawaited(controller?.dispose() ?? Future<void>.value());
+      } else if (_mobileController != null) {
+        unawaited(_mobileController!.stop());
+      }
+    } else if (state == AppLifecycleState.resumed && mounted) {
+      _cameraSuspensa = false;
+      if (_isWindows) {
+        unawaited(_inicializarCameraCerta());
+      } else if (_mobileController != null) {
+        unawaited(_mobileController!.start());
+      }
+    }
   }
 
   Future<void> _inicializarCameraCerta() async {
     if (_isWindows) {
+      if (_inicializandoCameraWindows || _cameraSuspensa) return;
+      _inicializandoCameraWindows = true;
       // Caminho Windows: Inicializa a Webcam usando o pacote 'camera' padrão
       try {
         final cameras = await availableCameras();
+        if (!mounted || _cameraSuspensa) return;
         if (cameras.isNotEmpty) {
-          _windowsCameraController = CameraController(
+          final controller = CameraController(
             cameras.first,
             ResolutionPreset.medium,
             enableAudio: false,
           );
-          await _windowsCameraController!.initialize();
-          if (mounted) setState(() {});
+          await controller.initialize();
+          if (!mounted || _cameraSuspensa) {
+            await controller.dispose();
+            return;
+          }
+          _windowsCameraController = controller;
+          setState(() => _erroNoHardwareDaCamera = false);
         } else {
           _marcarErroCamera();
         }
       } catch (e) {
         _marcarErroCamera();
+      } finally {
+        _inicializandoCameraWindows = false;
       }
     } else {
       // Caminho Mobile: Inicializa o MobileScanner
       try {
+        if (!mounted || _cameraSuspensa) return;
         _mobileController = mobile.MobileScannerController();
       } catch (e) {
         _marcarErroCamera();
@@ -63,7 +99,7 @@ class _QrCodeScannerPageState extends State<QrCodeScannerPage> {
   }
 
   void _marcarErroCamera() {
-    if (mounted) {
+    if (mounted && !_cameraSuspensa) {
       setState(() {
         _erroNoHardwareDaCamera = true;
         _mostrarDigitacaoManual = true;
@@ -73,11 +109,12 @@ class _QrCodeScannerPageState extends State<QrCodeScannerPage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     // Libera os recursos de acordo com a plataforma ativa
     if (_isWindows) {
-      _windowsCameraController?.dispose();
+      unawaited(_windowsCameraController?.dispose() ?? Future<void>.value());
     } else {
-      _mobileController?.dispose();
+      unawaited(_mobileController?.dispose() ?? Future<void>.value());
     }
     _manualController.dispose();
     super.dispose();

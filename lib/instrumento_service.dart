@@ -1,6 +1,5 @@
 // lib/instrumento_service.dart
-// Centraliza o acesso híbrido (SQLite local + Firestore) aos instrumentos,
-// antes duplicado entre gestao_ferramentas_page.dart e novo_projeto_page.dart.
+// Centraliza o acesso híbrido (SQLite local + Firestore) aos instrumentos.
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'database_helper.dart';
@@ -101,7 +100,12 @@ class InstrumentoService {
 
     try {
       final db = await _dbHelper.database;
-      final localRes = await db.query('instrumentos', where: 'tag = ?', whereArgs: [tagFormatada], limit: 1);
+      final localRes = await db.query(
+        'instrumentos',
+        where: 'tag = ? AND dominio_empresa = ?',
+        whereArgs: [tagFormatada, dominioPadrao],
+        limit: 1,
+      );
 
       if (localRes.isNotEmpty) {
         return _daMapaSqlite(
@@ -115,14 +119,13 @@ class InstrumentoService {
         );
       }
 
-      final nuvemRes = await _firestore
-          .collection(FirestoreColecoes.instrumentos)
-          .where('tag', isEqualTo: tagFormatada)
-          .limit(1)
-          .get();
+      final nuvemRes = await _firestore.collection(FirestoreColecoes.instrumentos).where('tag', isEqualTo: tagFormatada).get();
 
-      if (nuvemRes.docs.isNotEmpty) {
-        return InstrumentoModel.fromFirestore(nuvemRes.docs.first.data(), nuvemRes.docs.first.id);
+      for (final doc in nuvemRes.docs) {
+        final dados = doc.data();
+        if (dados['dominio_empresa']?.toString() == dominioPadrao) {
+          return InstrumentoModel.fromFirestore(dados, doc.id);
+        }
       }
     } catch (e) {
       debugPrint("InstrumentoService: erro na busca por TAG: $e");

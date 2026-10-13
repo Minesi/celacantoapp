@@ -36,6 +36,13 @@ service cloud.firestore {
       return isSupervisor() || isAdmin();
     }
 
+    function historicoNaoReduzido() {
+      return !resource.data.keys().hasAll(['history'])
+        || !request.resource.data.keys().hasAll(['history'])
+        || (request.resource.data.history.size() >= resource.data.history.size()
+            && request.resource.data.history.hasAll(resource.data.history));
+    }
+
     // --- USUARIOS ---
     match /usuarios/{uid} {
       allow read: if isSignedIn() && (request.auth.uid == uid || temOverride());
@@ -81,14 +88,30 @@ service cloud.firestore {
 
       // Redator só altera campos de configuração; técnico só altera campos de resultado;
       // supervisor/admin podem alterar qualquer campo (override).
-      allow update: if temOverride()
-        || (isRedator() && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['sistemaId', 'area', 'salas', 'handlingUnits', 'ensaiosSelecionados',
-                        'tipoProjeto', 'ferramentasRequeridas', 'templateUtilizado']))
-        || (isTecnico() && request.resource.data.diff(resource.data).affectedKeys()
-              .hasOnly(['ferramentasEscaneadas', 'leiturasOcr', 'pontosLeitura', 'status', 'history']));
+      allow update: if resource.data.status != 'aprovado'
+        && historicoNaoReduzido()
+        && (temOverride()
+          || (isRedator() && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['sistemaId', 'area', 'salas', 'handlingUnits', 'ensaiosSelecionados',
+              'tipoProjeto', 'ferramentasRequeridas', 'templateUtilizado']))
+          || (isTecnico() && request.resource.data.diff(resource.data).affectedKeys()
+            .hasOnly(['ferramentasEscaneadas', 'leiturasOcr', 'pontosLeitura', 'status', 'history', 'paralelismo'])));
 
-      allow delete: if temOverride();
+      allow delete: if false;
+    }
+
+    // --- LIBERACOES (auditoria de TOTP e autorizacoes offline; gravadas so pelas Cloud Functions) ---
+    // totp_segredos, liberacoes_tentativas, autorizacao_chaves_offline e
+    // autorizacao_offline_nonces ficam cobertos pelo "nega tudo" abaixo.
+    match /liberacoes/{liberacaoId} {
+      allow read: if temOverride();
+      allow write: if false;
+    }
+
+    // --- RELATORIOS_EMAIL (auditoria de envio; gravada so pela Cloud Function) ---
+    match /relatorios_email/{envioId} {
+      allow read: if temOverride();
+      allow write: if false;
     }
 
     // Nega tudo que não foi explicitamente liberado acima.

@@ -4,6 +4,7 @@ import 'filtro_model.dart';
 class HandlingUnitModel {
   final String id;
   final String nome;
+  final String numero;
   final List<FiltroModel> filtros;
   final bool temFiltroTerminal;
   final int qtdFiltrosTerminais;
@@ -11,6 +12,7 @@ class HandlingUnitModel {
   HandlingUnitModel({
     required this.id,
     required this.nome,
+    this.numero = '',
     this.filtros = const [],
     this.temFiltroTerminal = false,
     this.qtdFiltrosTerminais = 0,
@@ -20,6 +22,7 @@ class HandlingUnitModel {
     return {
       'id': id,
       'nome': nome,
+      'numero': numero,
       'filtros': filtros.map((f) => f.toMap()).toList(),
       'temFiltroTerminal': temFiltroTerminal,
       'qtdFiltrosTerminais': qtdFiltrosTerminais,
@@ -30,6 +33,7 @@ class HandlingUnitModel {
     return HandlingUnitModel(
       id: data['id']?.toString() ?? '',
       nome: data['nome']?.toString() ?? '',
+      numero: data['numero']?.toString() ?? '',
       filtros: ((data['filtros'] ?? const []) as List)
           .map((f) => FiltroModel.fromMap(Map<String, dynamic>.from(f)))
           .toList(),

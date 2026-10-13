@@ -1,4 +1,5 @@
 // lib/sala_model.dart
+import 'dart:convert';
 import 'filtro_model.dart';
 
 // Graus A/B/C exigem etapas extras (recuperação de partículas e queda de energia); D não exige.
@@ -10,8 +11,10 @@ class SalaModel {
   final double area; // m²
   final double volume; // m³
   final GrauSala grau;
-  final String handlingUnitId; // Máquina (UTA) que atende a sala
+  final String handlingUnitId; // Máquina (UTA) principal que atende a sala
+  final List<String> handlingUnitIdsAdicionais; // Casos raros de sala atendida por mais de uma máquina
   final List<FiltroModel> filtros; // Saídas/difusores da sala
+  final Map<String, Map<String, dynamic>> configEnsaios;
 
   SalaModel({
     required this.id,
@@ -20,8 +23,14 @@ class SalaModel {
     required this.volume,
     required this.grau,
     this.handlingUnitId = '',
+    this.handlingUnitIdsAdicionais = const [],
     this.filtros = const [],
+    this.configEnsaios = const {},
   });
+
+  List<String> get handlingUnitIds => [handlingUnitId, ...handlingUnitIdsAdicionais];
+
+  bool atendidaPor(String handlingUnitIdMaquina) => handlingUnitIds.contains(handlingUnitIdMaquina);
 
   bool get exigeTesteRecuperacaoEQuedaDeEnergia => grau != GrauSala.d;
 
@@ -41,7 +50,9 @@ class SalaModel {
       'volume': volume,
       'grau': grau.name,
       'handlingUnitId': handlingUnitId,
+      'handlingUnitIdsAdicionais': handlingUnitIdsAdicionais,
       'filtros': filtros.map((f) => f.toMap()).toList(),
+      'configEnsaios': configEnsaios,
     };
   }
 
@@ -60,9 +71,38 @@ class SalaModel {
         orElse: () => GrauSala.d,
       ),
       handlingUnitId: data['handlingUnitId']?.toString() ?? '',
+      handlingUnitIdsAdicionais: _lerListaIds(data['handlingUnitIdsAdicionais']),
       filtros: ((data['filtros'] ?? const []) as List)
           .map((f) => FiltroModel.fromMap(Map<String, dynamic>.from(f)))
           .toList(),
+        configEnsaios: _lerConfigEnsaios(data['configEnsaios']),
     );
+  }
+
+  // SQLite guarda a lista como JSON (TEXT); Firestore como array.
+  static List<String> _lerListaIds(dynamic valor) {
+    if (valor is List) return valor.map((e) => e.toString()).toList();
+    if (valor is String && valor.isNotEmpty) {
+      try {
+        return (jsonDecode(valor) as List).map((e) => e.toString()).toList();
+      } catch (_) {}
+    }
+    return const [];
+  }
+
+  static Map<String, Map<String, dynamic>> _lerConfigEnsaios(dynamic valor) {
+    dynamic bruto = valor;
+    if (bruto is String && bruto.isNotEmpty) {
+      try {
+        bruto = jsonDecode(bruto);
+      } catch (_) {
+        return const {};
+      }
+    }
+    if (bruto is! Map) return const {};
+    return bruto.map<String, Map<String, dynamic>>((chave, dados) => MapEntry(
+          chave.toString(),
+          dados is Map ? Map<String, dynamic>.from(dados) : <String, dynamic>{},
+        ));
   }
 }

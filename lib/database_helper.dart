@@ -5,10 +5,13 @@ import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'firestore_colecoes.dart';
+import 'offline_authorization_service.dart';
+import 'execucao_database.dart';
 
-class DatabaseHelper {
+class DatabaseHelper implements ExecucaoDatabase {
   static final DatabaseHelper _instance = DatabaseHelper._internal();
   static Database? _database;
+  Future<int>? _sincronizacaoEmAndamento;
 
   factory DatabaseHelper() => _instance;
   DatabaseHelper._internal();
@@ -26,9 +29,10 @@ class DatabaseHelper {
 
     return await openDatabase(
       path,
-      version: 7, // 7: salas→máquina, filtros por sala, filtro por ponto e catálogo de testes
+      version: 10, // 10: dados estruturados dos novos ensaios do Fluxo Laminar
       onCreate: _onCreate,
       onUpgrade: _onUpgrade, // Callback definitivo para gerenciar futuras atualizações de tabelas
+      onOpen: _validarEsquemaBanco,
     );
   }
 
@@ -88,7 +92,9 @@ class DatabaseHelper {
         area TEXT,
         ensaiosSelecionados TEXT,
         status TEXT DEFAULT 'rascunho',
-        history TEXT
+        history TEXT,
+        paralelismo TEXT,
+        validadeTestesMeses INTEGER
       )
     ''');
 
@@ -112,7 +118,9 @@ class DatabaseHelper {
         volume REAL,
         grau TEXT,
         qtdDifusores INTEGER,
-        handlingUnitId TEXT
+        handlingUnitId TEXT,
+        handlingUnitIdsAdicionais TEXT,
+        configEnsaios TEXT
       )
     ''');
 
@@ -122,6 +130,7 @@ class DatabaseHelper {
         id TEXT PRIMARY KEY,
         projetoId TEXT,
         nome TEXT,
+        numero TEXT,
         temFiltroTerminal INTEGER,
         qtdFiltrosTerminais INTEGER
       )
@@ -135,7 +144,10 @@ class DatabaseHelper {
         tipo TEXT,
         quantidade INTEGER,
         localizacao TEXT,
-        salaId TEXT
+        salaId TEXT,
+        marca TEXT,
+        modelo TEXT,
+        dimensoes TEXT
       )
     ''');
 
@@ -151,9 +163,13 @@ class DatabaseHelper {
         valor5um TEXT,
         fotoEvidenciaUrl TEXT,
         dataHoraCaptura TEXT,
-        filtroId TEXT
+        filtroId TEXT,
+        filtroIndice TEXT,
+        estado TEXT
       )
     ''');
+
+    await _criarTabelaResultadosEnsaio(db);
 
     await _criarTabelaTestesCatalogo(db);
     
@@ -309,6 +325,110 @@ class DatabaseHelper {
         debugPrint("MIGRATION NOTICE: Falha ao criar tabela 'testes_catalogo': $e");
       }
     }
+
+    if (oldVersion < 8) {
+      for (final alter in [
+        'ALTER TABLE salas ADD COLUMN handlingUnitIdsAdicionais TEXT;',
+        'ALTER TABLE filtros ADD COLUMN marca TEXT;',
+        'ALTER TABLE filtros ADD COLUMN modelo TEXT;',
+        'ALTER TABLE filtros ADD COLUMN dimensoes TEXT;',
+      ]) {
+        try {
+          await db.execute(alter);
+        } catch (e) {
+          debugPrint("MIGRATION NOTICE: '$alter' falhou (coluna já existia?): $e");
+        }
+      }
+    }
+
+    if (oldVersion < 9) {
+      try {
+        await db.execute('ALTER TABLE projetos ADD COLUMN paralelismo TEXT;');
+      } catch (e) {
+        debugPrint("MIGRATION NOTICE: coluna 'paralelismo' já existia ou falhou ao injetar: $e");
+      }
+    }
+      if (oldVersion < 10) {
+        for (final alter in [
+          'ALTER TABLE projetos ADD COLUMN validadeTestesMeses INTEGER;',
+          'ALTER TABLE salas ADD COLUMN configEnsaios TEXT;',
+          'ALTER TABLE handling_units ADD COLUMN numero TEXT;',
+          'ALTER TABLE pontos_leitura ADD COLUMN filtroIndice TEXT;',
+          'ALTER TABLE pontos_leitura ADD COLUMN estado TEXT;',
+        ]) {
+          try {
+            await db.execute(alter);
+          } catch (e) {
+            debugPrint("MIGRATION NOTICE: '$alter' falhou (coluna já existia?): $e");
+          }
+        }
+        await _criarTabelaResultadosEnsaio(db);
+      }
+  }
+
+    Future<void> _criarTabelaResultadosEnsaio(Database db) async {
+      await db.execute('''
+        CREATE TABLE IF NOT EXISTS resultados_ensaio (
+          id TEXT PRIMARY KEY,
+          projetoId TEXT,
+          salaId TEXT,
+          ensaioTipo TEXT,
+          conforme INTEGER,
+          observacoes TEXT,
+          tecnicoEmail TEXT,
+          dataHora TEXT,
+          dados TEXT
+        )
+      ''');
+    }
+
+  Future<void> _validarEsquemaBanco(Database db) async {
+    const esquemaObrigatorio = <String, List<String>>{
+      'usuarios': ['id', 'nome', 'cpf', 'email', 'senha', 'perfil', 'dominio_empresa'],
+      'instrumentos': ['id', 'tipo', 'tag', 'numeroSerie', 'numeroCertificado', 'validade', 'estaValido', 'dominio_empresa'],
+      'empresas': ['cnpj', 'razaoSocial', 'nomeFantasia', 'dominio_empresa'],
+      'projetos': [
+        'id', 'cnpjEmpresa', 'tipoProjeto', 'ferramentasRequeridas', 'ferramentasEscaneadas', 'leiturasOcr',
+        'dataCriacao', 'operadorResponsavel', 'templateUtilizado', 'sincronizado', 'sistemaId', 'area',
+        'ensaiosSelecionados', 'status', 'history', 'paralelismo', 'validadeTestesMeses',
+      ],
+      'sistemas': ['id', 'nome', 'areasAtendidas', 'dominio_empresa'],
+      'salas': ['id', 'projetoId', 'nome', 'area', 'volume', 'grau', 'qtdDifusores', 'handlingUnitId', 'handlingUnitIdsAdicionais', 'configEnsaios'],
+      'handling_units': ['id', 'projetoId', 'nome', 'numero', 'temFiltroTerminal', 'qtdFiltrosTerminais'],
+      'filtros': ['id', 'handlingUnitId', 'tipo', 'quantidade', 'localizacao', 'salaId', 'marca', 'modelo', 'dimensoes'],
+      'pontos_leitura': [
+        'id', 'projetoId', 'salaId', 'ensaioTipo', 'numeroPonto', 'valor05um', 'valor5um', 'fotoEvidenciaUrl',
+        'dataHoraCaptura', 'filtroId', 'filtroIndice', 'estado',
+      ],
+      'testes_catalogo': ['id', 'tipoEnsaio', 'dominio_empresa', 'resumo', 'tabelaConfig', 'atualizadoEm'],
+      'resultados_ensaio': ['id', 'projetoId', 'salaId', 'ensaioTipo', 'conforme', 'observacoes', 'tecnicoEmail', 'dataHora', 'dados'],
+    };
+
+    for (final entrada in esquemaObrigatorio.entries) {
+      final colunas = await db.rawQuery('PRAGMA table_info(${entrada.key})');
+      if (colunas.isEmpty) {
+        throw StateError('Banco local inconsistente: tabela ${entrada.key} ausente.');
+      }
+
+      final nomes = colunas.map((coluna) => coluna['name']?.toString()).toSet();
+      final faltantes = entrada.value.where((nome) => !nomes.contains(nome)).toList();
+      if (faltantes.isNotEmpty) {
+        throw StateError(
+          'Banco local inconsistente: ${entrada.key} sem coluna(s): ${faltantes.join(', ')}.',
+        );
+      }
+    }
+  }
+
+  Future<void> recriarBancoLocal() async {
+    final dbAberto = _database;
+    _database = null;
+    if (dbAberto != null) await dbAberto.close();
+
+    final dbPath = await getDatabasesPath();
+    final path = join(dbPath, 'celacanto_local_database.db');
+    await deleteDatabase(path);
+    await database;
   }
 
   Future<void> _criarTabelaTestesCatalogo(Database db) async {
@@ -373,6 +493,33 @@ class DatabaseHelper {
     );
   }
 
+  Future<void> aplicarImportacaoInstrumentos(
+    List<Map<String, dynamic>> novos,
+    List<Map<String, dynamic>> atualizacoes,
+  ) async {
+    final db = await database;
+    await db.transaction((transacao) async {
+      for (final instrumento in novos) {
+        await transacao.insert(
+          'instrumentos',
+          instrumento,
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+      }
+      for (final atualizacao in atualizacoes) {
+        final tag = atualizacao['tag']?.toString().toUpperCase().trim();
+        final dados = atualizacao['dados'];
+        if (tag == null || tag.isEmpty || dados is! Map<String, dynamic>) continue;
+        await transacao.update(
+          'instrumentos',
+          dados,
+          where: 'tag = ?',
+          whereArgs: [tag],
+        );
+      }
+    });
+  }
+
   // --- MÉTODOS GERENCIAIS DE EMPRESAS ---
   Future<int> insertEmpresa(Map<String, dynamic> empresa) async {
     final db = await database;
@@ -402,6 +549,7 @@ class DatabaseHelper {
       ..['ensaiosSelecionados'] = jsonEncode(projeto['ensaiosSelecionados'] ?? [])
       ..['status'] = projeto['status'] ?? 'rascunho'
       ..['history'] = jsonEncode(projeto['history'] ?? [])
+      ..['paralelismo'] = projeto['paralelismo'] == null ? null : jsonEncode(projeto['paralelismo'])
       ..['sincronizado'] = 0;
 
     return await db.insert('projetos', mapaPersistido, conflictAlgorithm: ConflictAlgorithm.replace);
@@ -440,6 +588,7 @@ class DatabaseHelper {
       ..['ensaiosSelecionados'] = jsonEncode(projeto['ensaiosSelecionados'] ?? [])
       ..['status'] = projeto['status'] ?? 'rascunho'
       ..['history'] = jsonEncode(projeto['history'] ?? [])
+      ..['paralelismo'] = projeto['paralelismo'] == null ? null : jsonEncode(projeto['paralelismo'])
       ..['sincronizado'] = 1;
     // Mantém só colunas existentes na tabela; campos aninhados vão para tabelas próprias.
     mapaPersistido.removeWhere((chave, _) => !_colunasProjetos.contains(chave));
@@ -460,6 +609,7 @@ class DatabaseHelper {
         'id': huId,
         'projetoId': projetoId,
         'nome': huMap['nome'],
+        'numero': huMap['numero'] ?? '',
         'temFiltroTerminal': huMap['temFiltroTerminal'] == true ? 1 : 0,
         'qtdFiltrosTerminais': huMap['qtdFiltrosTerminais'],
       });
@@ -474,20 +624,45 @@ class DatabaseHelper {
     for (final ponto in (projeto['pontosLeitura'] as List? ?? const [])) {
       await insertPontoLeitura({...Map<String, dynamic>.from(ponto), 'projetoId': projetoId});
     }
+    for (final resultado in (projeto['resultadosEnsaios'] as List? ?? const [])) {
+      await inserirResultadoEnsaio({...Map<String, dynamic>.from(resultado), 'projetoId': projetoId});
+    }
   }
 
   static const Set<String> _colunasProjetos = {
     'id', 'cnpjEmpresa', 'tipoProjeto', 'ferramentasRequeridas', 'ferramentasEscaneadas',
     'leiturasOcr', 'dataCriacao', 'operadorResponsavel', 'templateUtilizado', 'sincronizado',
-    'sistemaId', 'area', 'ensaiosSelecionados', 'status', 'history',
+    'sistemaId', 'area', 'ensaiosSelecionados', 'status', 'history', 'paralelismo', 'validadeTestesMeses',
   };
 
-  Future<void> sincronizarProjetosPendentes() async {
+  Future<int> sincronizarProjetosPendentes() {
+    final sincronizacaoAtual = _sincronizacaoEmAndamento;
+    if (sincronizacaoAtual != null) return sincronizacaoAtual;
+
+    final novaSincronizacao = _sincronizarProjetosPendentes();
+    _sincronizacaoEmAndamento = novaSincronizacao;
+    novaSincronizacao.then(
+      (_) {
+        if (identical(_sincronizacaoEmAndamento, novaSincronizacao)) {
+          _sincronizacaoEmAndamento = null;
+        }
+      },
+      onError: (Object _, StackTrace _) {
+        if (identical(_sincronizacaoEmAndamento, novaSincronizacao)) {
+          _sincronizacaoEmAndamento = null;
+        }
+      },
+    );
+    return novaSincronizacao;
+  }
+
+  Future<int> _sincronizarProjetosPendentes() async {
     final projetosPendentes = await getProjetosPendentes();
-    if (projetosPendentes.isEmpty) return;
+    if (projetosPendentes.isEmpty) return 0;
 
     final firestore = FirebaseFirestore.instance;
     final db = await database;
+    var sincronizados = 0;
 
     for (final projeto in projetosPendentes) {
       try {
@@ -507,21 +682,65 @@ class DatabaseHelper {
           'ensaiosSelecionados': jsonDecode(projeto['ensaiosSelecionados'] ?? '[]'),
           'status': projeto['status'] ?? 'rascunho',
           'history': jsonDecode(projeto['history'] ?? '[]'),
+          'paralelismo': projeto['paralelismo'] == null ? null : jsonDecode(projeto['paralelismo'].toString()),
+          'validadeTestesMeses': projeto['validadeTestesMeses'],
           'salas': await getSalasComFiltrosPorProjeto(projetoId),
           'handlingUnits': await _handlingUnitsComFiltrosPorProjeto(projetoId),
           'pontosLeitura': await getPontosLeituraPorProjeto(projetoId),
+          'resultadosEnsaios': await getResultadosEnsaioPorProjeto(projetoId),
         };
 
-        await firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(payload);
+        await _reconciliarAutorizacoesOffline(payload);
+        await firestore
+          .collection(FirestoreColecoes.projetos)
+          .doc(projetoId)
+          .set(payload, SetOptions(merge: true));
         await db.update(
           'projetos',
           {'sincronizado': 1},
           where: 'id = ?',
           whereArgs: [projeto['id']],
         );
+        sincronizados++;
+      } on FirebaseException catch (erro) {
+        if (erro.code == 'permission-denied' &&
+            projeto['status']?.toString() == 'aprovado') {
+          await db.update(
+            'projetos',
+            {'sincronizado': 1},
+            where: 'id = ?',
+            whereArgs: [projeto['id']],
+          );
+          debugPrint(
+            'Projeto ${projeto['id']} já está aprovado na nuvem; sincronização local encerrada.',
+          );
+        } else {
+          debugPrint('Falha ao sincronizar projeto ${projeto['id']}: $erro');
+        }
       } catch (e) {
         debugPrint('Falha ao sincronizar projeto ${projeto['id']}: $e');
       }
+    }
+    return sincronizados;
+  }
+
+  Future<void> _reconciliarAutorizacoesOffline(Map<String, dynamic> projeto) async {
+    final historico = projeto['history'];
+    if (historico is! List) return;
+
+    final tokens = <String>{};
+    for (final entrada in historico) {
+      if (entrada is! Map) continue;
+      final detalhes = entrada['detalhes'];
+      if (detalhes is! Map) continue;
+      final liberacao = detalhes['liberacao'];
+      if (liberacao is! Map || liberacao['metodo']?.toString() != 'offline_assinada') continue;
+      final token = liberacao['autorizacaoOffline']?.toString().trim() ?? '';
+      if (token.isNotEmpty) tokens.add(token);
+    }
+
+    for (final token in tokens) {
+      await OfflineAuthorizationService.instance.reconciliarAutorizacao(responseToken: token);
     }
   }
 
@@ -556,8 +775,34 @@ class DatabaseHelper {
   Future<List<Map<String, dynamic>>> getSalasComFiltrosPorProjeto(String projetoId) async {
     final salas = await getSalasPorProjeto(projetoId);
     return [
-      for (final sala in salas) {...sala, 'filtros': await getFiltrosPorSala(sala['id'].toString())},
+      for (final sala in salas)
+        {
+          ...sala,
+          'handlingUnitIdsAdicionais': _decodificarListaIds(sala['handlingUnitIdsAdicionais']),
+          'configEnsaios': _decodificarMapa(sala['configEnsaios']),
+          'filtros': await getFiltrosPorSala(sala['id'].toString()),
+        },
     ];
+  }
+
+  static List<String> _decodificarListaIds(dynamic valor) {
+    if (valor is! String || valor.isEmpty) return const [];
+    try {
+      return (jsonDecode(valor) as List).map((e) => e.toString()).toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  static Map<String, dynamic> _decodificarMapa(dynamic valor) {
+    if (valor is Map) return Map<String, dynamic>.from(valor);
+    if (valor is String && valor.isNotEmpty) {
+      try {
+        final decodificado = jsonDecode(valor);
+        if (decodificado is Map) return Map<String, dynamic>.from(decodificado);
+      } catch (_) {}
+    }
+    return const {};
   }
 
   /// Regrava as salas do projeto e suas saídas (filtros) a partir de mapas no formato SalaModel.toMap().
@@ -574,7 +819,12 @@ class DatabaseHelper {
       final salaMap = Map<String, dynamic>.from(sala);
       final filtros = (salaMap.remove('filtros') as List? ?? const []);
       final salaId = salaMap['id'].toString();
-      await insertSala({...salaMap, 'projetoId': projetoId});
+      await insertSala({
+        ...salaMap,
+        'projetoId': projetoId,
+        'handlingUnitIdsAdicionais': jsonEncode(salaMap['handlingUnitIdsAdicionais'] ?? const []),
+        'configEnsaios': jsonEncode(salaMap['configEnsaios'] ?? const {}),
+      });
       for (final filtro in filtros) {
         await insertFiltro({...Map<String, dynamic>.from(filtro), 'salaId': salaId});
       }
@@ -629,17 +879,6 @@ class DatabaseHelper {
     return await db.query('testes_catalogo', where: 'dominio_empresa = ?', whereArgs: [dominio]);
   }
 
-  Future<Map<String, dynamic>?> getTesteCatalogo(String dominio, String tipoEnsaio) async {
-    final db = await database;
-    final resultado = await db.query(
-      'testes_catalogo',
-      where: 'dominio_empresa = ? AND tipoEnsaio = ?',
-      whereArgs: [dominio, tipoEnsaio],
-      limit: 1,
-    );
-    return resultado.isEmpty ? null : resultado.first;
-  }
-
   // Reconstrói cada handling unit já com seus filtros embutidos, no formato esperado pelo Firestore
   // (HandlingUnitModel.toMap()/fromMap()).
   Future<List<Map<String, dynamic>>> _handlingUnitsComFiltrosPorProjeto(String projetoId) async {
@@ -651,6 +890,7 @@ class DatabaseHelper {
       resultado.add({
         'id': handlingUnit['id'],
         'nome': handlingUnit['nome'],
+        'numero': handlingUnit['numero'] ?? '',
         'temFiltroTerminal': handlingUnit['temFiltroTerminal'] == 1,
         'qtdFiltrosTerminais': handlingUnit['qtdFiltrosTerminais'],
         'filtros': filtros,
@@ -661,6 +901,7 @@ class DatabaseHelper {
   }
 
   // --- MÉTODOS GERENCIAIS DE PONTOS DE LEITURA ---
+  @override
   Future<int> insertPontoLeitura(Map<String, dynamic> ponto) async {
     final db = await database;
     return await db.insert('pontos_leitura', ponto, conflictAlgorithm: ConflictAlgorithm.replace);
@@ -671,6 +912,7 @@ class DatabaseHelper {
     return await db.query('pontos_leitura', where: 'projetoId = ?', whereArgs: [projetoId]);
   }
 
+  @override
   Future<List<Map<String, dynamic>>> getPontosLeituraPorSalaEEnsaio(String salaId, String ensaioTipo) async {
     final db = await database;
     return await db.query(
@@ -680,6 +922,7 @@ class DatabaseHelper {
     );
   }
 
+  @override
   Future<int> deletePontosLeituraPorSalaEEnsaio(String salaId, String ensaioTipo) async {
     final db = await database;
     return await db.delete(
@@ -687,6 +930,47 @@ class DatabaseHelper {
       where: 'salaId = ? AND ensaioTipo = ?',
       whereArgs: [salaId, ensaioTipo],
     );
+  }
+
+  Future<int> inserirResultadoEnsaio(Map<String, dynamic> resultado) async {
+    final db = await database;
+    final mapa = Map<String, dynamic>.from(resultado)
+      ..['dataHora'] = resultado['dataHora'] is Timestamp
+          ? (resultado['dataHora'] as Timestamp).toDate().toIso8601String()
+          : resultado['dataHora']?.toString()
+      ..['conforme'] = resultado['conforme'] == null
+          ? null
+          : resultado['conforme'] == true || resultado['conforme'] == 1
+              ? 1
+              : 0
+      ..['dados'] = jsonEncode(resultado['dados'] ?? {});
+    return await db.insert('resultados_ensaio', mapa, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
+  Future<List<Map<String, dynamic>>> getResultadosEnsaioPorProjeto(String projetoId) async {
+    final db = await database;
+    final resultados = await db.query('resultados_ensaio', where: 'projetoId = ?', whereArgs: [projetoId]);
+    return resultados.map(_decodificarResultadoEnsaio).toList();
+  }
+
+  @override
+  Future<Map<String, dynamic>?> getResultadoEnsaio(String salaId, String ensaioTipo) async {
+    final db = await database;
+    final resultados = await db.query(
+      'resultados_ensaio',
+      where: 'salaId = ? AND ensaioTipo = ?',
+      whereArgs: [salaId, ensaioTipo],
+      limit: 1,
+    );
+    return resultados.isEmpty ? null : _decodificarResultadoEnsaio(resultados.first);
+  }
+
+  static Map<String, dynamic> _decodificarResultadoEnsaio(Map<String, dynamic> resultado) {
+    final mapa = Map<String, dynamic>.from(resultado);
+    final dados = mapa['dados'];
+    mapa['dados'] = dados is String && dados.isNotEmpty ? jsonDecode(dados) : (dados ?? {});
+    if (mapa['conforme'] is num) mapa['conforme'] = mapa['conforme'] == 1;
+    return mapa;
   }
 
   // Atualiza só o campo de ferramentas escaneadas (usado quando o técnico vincula instrumentos
@@ -701,17 +985,32 @@ class DatabaseHelper {
     );
   }
 
+  Future<int> atualizarParalelismoProjeto(String projetoId, Map<String, dynamic> paralelismo) async {
+    final db = await database;
+    return await db.update(
+      'projetos',
+      {'paralelismo': jsonEncode(paralelismo)},
+      where: 'id = ?',
+      whereArgs: [projetoId],
+    );
+  }
+
   // Atualiza o status do fluxo de aprovação (rascunho/pronto_para_campo/em_revisao/aprovado)
   // e acrescenta uma entrada no histórico de auditoria (quem, quando, campo, valores).
   Future<int> atualizarStatusEHistoricoProjeto(
     String projetoId, {
     required String novoStatus,
     required List<Map<String, dynamic>> historicoCompleto,
+    bool sincronizado = false,
   }) async {
     final db = await database;
     return await db.update(
       'projetos',
-      {'status': novoStatus, 'history': jsonEncode(historicoCompleto)},
+      {
+        'status': novoStatus,
+        'history': jsonEncode(historicoCompleto),
+        'sincronizado': sincronizado ? 1 : 0,
+      },
       where: 'id = ?',
       whereArgs: [projetoId],
     );

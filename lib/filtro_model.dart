@@ -8,6 +8,14 @@ const Map<String, TipoFiltro> _tiposFiltroLegados = {
   'absoluto': TipoFiltro.h14,
 };
 
+extension TipoFiltroRotulo on TipoFiltro {
+  String get rotulo => switch (this) {
+        TipoFiltro.g4 => 'Grosso (G4)',
+        TipoFiltro.f9 => 'Fino (F9)',
+        TipoFiltro.h14 => 'Absoluto (H14)',
+      };
+}
+
 enum LocalizacaoFiltro { maquina, terminal }
 
 class FiltroModel {
@@ -15,13 +23,28 @@ class FiltroModel {
   final TipoFiltro tipo;
   final int quantidade;
   final LocalizacaoFiltro localizacao;
+  final String marca;
+  final String modelo;
+  final String dimensoes;
 
   FiltroModel({
     required this.id,
     required this.tipo,
     required this.quantidade,
     required this.localizacao,
+    this.marca = '',
+    this.modelo = '',
+    this.dimensoes = '',
   });
+
+  /// Ex.: "2× G4 (Trox TFP, 610x610x48)".
+  String get descricao {
+    final detalhes = [
+      [marca, modelo].where((s) => s.isNotEmpty).join(' '),
+      dimensoes,
+    ].where((s) => s.isNotEmpty).join(', ');
+    return '$quantidade× ${tipo.name.toUpperCase()}${detalhes.isEmpty ? '' : ' ($detalhes)'}';
+  }
 
   Map<String, dynamic> toMap() {
     return {
@@ -29,6 +52,9 @@ class FiltroModel {
       'tipo': tipo.name,
       'quantidade': quantidade,
       'localizacao': localizacao.name,
+      'marca': marca,
+      'modelo': modelo,
+      'dimensoes': dimensoes,
     };
   }
 
@@ -46,6 +72,9 @@ class FiltroModel {
         (l) => l.name == data['localizacao'],
         orElse: () => LocalizacaoFiltro.maquina,
       ),
+      marca: data['marca']?.toString() ?? '',
+      modelo: data['modelo']?.toString() ?? '',
+      dimensoes: data['dimensoes']?.toString() ?? '',
     );
   }
 }

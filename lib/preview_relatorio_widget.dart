@@ -114,7 +114,7 @@ class PreviewRelatorioWidget extends StatelessWidget {
 
   String _descreverFiltros(SalaModel s) => s.filtros.isEmpty
       ? '-'
-      : s.filtros.map((f) => '${f.quantidade}× ${f.tipo.name.toUpperCase()}').join(', ');
+      : s.filtros.map((f) => f.descricao).join(', ');
 
   Widget _tabelaSalas(List<SalaModel> lista) {
     if (lista.isEmpty) return _vazio('Nenhuma sala atendida.');
@@ -125,10 +125,10 @@ class PreviewRelatorioWidget extends StatelessWidget {
   }
 
   Widget _buildMaquina(HandlingUnitModel h) {
-    final salasDaMaquina = salas.where((s) => s.handlingUnitId == h.id).toList();
+    final salasDaMaquina = salas.where((s) => s.atendidaPor(h.id)).toList();
     final filtrosInternos = h.filtros.isEmpty
         ? ''
-        : ' — filtros internos: ${h.filtros.map((f) => '${f.quantidade}× ${f.tipo.name.toUpperCase()}').join(', ')}';
+        : ' — filtros internos: ${h.filtros.map((f) => f.descricao).join(', ')}';
     return Padding(
       padding: const EdgeInsets.only(bottom: 12),
       child: Column(
@@ -144,7 +144,7 @@ class PreviewRelatorioWidget extends StatelessWidget {
 
   List<Widget> _buildSalasSemMaquina() {
     final idsMaquinas = handlingUnits.map((h) => h.id).toSet();
-    final orfas = salas.where((s) => !idsMaquinas.contains(s.handlingUnitId)).toList();
+    final orfas = salas.where((s) => !s.handlingUnitIds.any(idsMaquinas.contains)).toList();
     if (orfas.isEmpty) return const [];
     return [
       const Text('Salas sem máquina vinculada', style: TextStyle(fontWeight: FontWeight.w600, color: Colors.red)),

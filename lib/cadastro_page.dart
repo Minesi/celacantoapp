@@ -38,6 +38,10 @@ class _CadastroPageState extends State<CadastroPage> {
   bool _senhasIguais = false;
   bool _formularioValido = false;
 
+  List<PerfilUsuario> get _perfisDisponiveis => widget.perfilLogado == PerfilUsuario.admin
+      ? PerfilUsuario.values
+      : PerfilUsuario.values.where((perfil) => perfil != PerfilUsuario.admin).toList();
+
   @override
   void initState() {
     super.initState();
@@ -210,7 +214,7 @@ class _CadastroPageState extends State<CadastroPage> {
                   labelText: 'Perfil de Acesso',
                   prefixIcon: Icon(Icons.admin_panel_settings_outlined),
                 ),
-                items: PerfilUsuario.values.map((PerfilUsuario perfil) {
+                items: _perfisDisponiveis.map((PerfilUsuario perfil) {
                   return DropdownMenuItem<PerfilUsuario>(
                     value: perfil,
                     child: Text(perfil.name.toUpperCase()),

@@ -18,18 +18,6 @@ class UsuarioModel {
     required this.dominioEmpresa,
   });
 
-  // Converte os dados para salvar no Cloud Firestore
-  Map<String, dynamic> toMap() {
-    return {
-      'uid': uid,
-      'nome': nome,
-      'cpf': cpf,
-      'email': email,
-      'perfil': perfil.name, // Salva como String ('admin', 'tecnico'...)
-      'dominio_empresa': dominioEmpresa,
-    };
-  }
-
   // Reconstrói o Objeto a partir de um documento do Firestore
   factory UsuarioModel.fromFirestore(Map<String, dynamic> data, String id) {
     // Tratamento para converter a String de volta para o seu Enum PerfilUsuario

@@ -1,30 +1,37 @@
-# Execução ponto a ponto — Elaboração → Campo → Aprovação
+# Execução E2E — Fluxo Laminar: Elaboração → Campo → Aprovação → Emissão
 
-Data/Hora: 2026-09-24 16:34:24.270040  
+Data/Hora: 2026-10-09 08:41:54.448219  
 Usuário: admin@celacanto.com  
-Área do teste: AREA E2E 1790278404209
+Área do teste: AREA E2E 1791546019694  
+Projeto: PRJ-1791546037312  
+Registro de e-mail: relatorios_email/HzZv5r755LsthNXSmAgi
 
 | # | Verificação | Resultado | Evidência |
 |---|---|---|---|
 | 01 | Login com admin@celacanto.com | OK | 01_home.png |
-| 02 | Item 5: painel lateral de pré-visualização exibido no Windows | OK | 02_elaboracao_vazia.png |
-| 03 | Item 2: sala não pode ser criada sem máquina | OK | - |
-| 04 | Máquina UTA-01 com filtro interno G4 (padrão do dropdown) | OK | 04_modal_maquina.png |
-| 05 | Item 3: sala SALA 01 com filtro H14 x2 via dropdown | OK | 05_modal_SALA_01.png |
-| 06 | Item 3: sala SALA 02 com filtro F9 x1 via dropdown | OK | 06_modal_SALA_02.png |
-| 07 | Item 2: máquina UTA-01 atende SALA 01 e SALA 02 | OK | - |
-| 08 | Itens 1/2/5: prévia com resumo e tabela salas × filtros (3 linhas) | OK | 08_elaboracao_completa.png |
-| 09 | Item 2: salas gravadas com máquina e filtros (SQLite) | OK | - |
-| 10 | Item 1: resumo gravado em testes_catalogo (domínio celacanto.com) | OK | - |
-| 11 | Item 6: duplicidade detectada no mesmo minuto e liberada no minuto seguinte | OK | - |
-| 12 | Item 9: lista do técnico filtrada por área | OK | 12_campo_lista_filtrada.png |
-| 13 | Item 7: 3 testes exigidos (2 filtros SALA 01 + 1 filtro SALA 02) | OK | 13_campo_inicio.png |
-| 14 | Item 7: outro ensaio bloqueado enquanto há ensaio pendente | OK | 14_campo_bloqueio_pendente.png |
-| 15 | Item 7: ponto por filtro (Filtro 1 (F9)) preenchido | OK | 15_campo_execucao_sala02.png |
-| 16 | Item 7: senha errada do supervisor recusada | OK | 16_campo_liberacao_negada.png |
-| 17 | Item 7: relatório finalizado com liberação do supervisor | OK | 17_campo_finalizado.png |
-| 18 | Item 7: status em revisão + histórico da liberação + ponto vinculado ao filtro | OK | - |
-| 19 | Item 9: lista de aprovação filtrada por área | OK | 19_aprovacao_lista.png |
-| 20 | Item 8: supervisor vê resultados (12.5) e pendências (—) antes de aprovar | OK | 20_aprovacao_revisao.png |
-| 21 | Item 8: voltar da revisão não aprova o relatório | OK | - |
-| 22 | Falha na emissão do relatório | OK | 22_FALHA_emissao.png |
+| 02 | Empresa 11.222.333/0001-81 encontrada no Firestore (EMPRESA TESTE AUTOMATIZADO) | OK | - |
+| 03 | Sala não pode ser criada sem máquina | OK | - |
+| 04 | Máquina FLUXO-01 com 2× H14 | OK | 04_modal_maquina.png |
+| 05 | Sala SALA 01 com os 2 filtros H14 da máquina alocados | OK | 05_modal_sala.png |
+| 06 | Prévia com Integridade de Filtros em 2 pontos H14 | OK | 06_elaboracao_completa.png |
+| 07 | Projeto PRJ-1791546037312 pronto para campo com máquina, sala e 2 H14 alocados | OK | - |
+| 08 | Lista do técnico filtrada por área | OK | 08_campo_lista.png |
+| 09 | TAG inexistente rejeitada | OK | - |
+| 10 | TAG de outro tipo (Manômetro) rejeitada para Fotômetro | OK | - |
+| 11 | Fotômetro FOT-9001 validado | OK | 11_campo_ferramentas.png |
+| 12 | Finalizar com pendências exige liberação (TOTP/offline); cancelado | OK | 12_campo_liberacao_pendentes.png |
+| 13 | Encerramento incompleto exige liberação do supervisor; cancelado | OK | - |
+| 14 | Integridade: 2 pontos H14 preenchidos | OK | 14_campo_execucao.png |
+| 15 | Todos os testes feitos: relatório enviado para revisão | OK | 15_campo_concluido.png |
+| 16 | Status em revisão; 2 pontos gravados e vinculados aos filtros | OK | - |
+| 17 | Supervisor corrige ponto 1 de 0.005 para 0.006 | OK | 17_revisao_correcao.png |
+| 18 | Conclusão "Cumpre" antes da emissão | OK | 18_emissao_conclusao.png |
+| 19 | Relatório Fluxo Laminar aprovado, gerado e enviado por e-mail | OK | 19_relatorio_emitido.png |
+| 20 | Status aprovado; conclusão, observações e correção 0.005 → 0.006 no histórico | OK | - |
+| 21 | E-mail registrado como enviado para admin@celacanto.com (relatorios_email/HzZv5r755LsthNXSmAgi) | OK | - |
+| 22 | DOCX C:\Users\Michael/Downloads/Celacanto/Relatorio_PRJ-1791546037312.docx: cliente, área, equipamento e técnico preenchidos | OK | - |
+| 23 | DOCX traz só o teste executado (Integridade = Anexo 1) e anexos renumerados em sequência | OK | - |
+| 24 | DOCX contém ferramenta (TAG do Fotômetro) | OK | - |
+| 25 | DOCX contém sala | OK | - |
+| 26 | DOCX contém leituras do campo | OK | - |
+| 27 | Regeneração gravou um novo DOCX e manteve o status aprovado | OK | - |

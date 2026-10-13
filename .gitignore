@@ -44,9 +44,10 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# One-off import script credentials/deps (never commit service account keys)
-scripts/import_ferramentas/serviceAccountKey.json
-scripts/import_ferramentas/node_modules/
+# Generated and local-only artifacts
+*.hprof
+functions/node_modules/
+integration_test/screenshots/
 
 # Test user credentials
 CREDENCIAIS_TESTE.md

@@ -3,6 +3,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'database_helper.dart';
+import 'cloud_functions_client.dart';
 import 'firestore_colecoes.dart';
 import 'usuario_model.dart';
 
@@ -102,43 +103,34 @@ class AuthService {
     final dominio = extrairDominio(emailTratado);
 
     try {
-      final userCredential = await _auth.createUserWithEmailAndPassword(
-        email: emailTratado,
-        password: senha,
+      final resultado = await chamarCallable(
+        'cadastrarUsuario',
+        {
+          'nome': nome.trim(),
+          'cpf': cpf.trim(),
+          'email': emailTratado,
+          'senha': senha,
+          'perfil': perfil.name,
+        },
       );
-
-      if (userCredential.user == null) {
-        return false;
-      }
-
-      final novoUsuario = UsuarioModel(
-        uid: userCredential.user!.uid,
-        nome: nome.trim(),
-        cpf: cpf.trim(),
-        email: emailTratado,
-        perfil: perfil,
-        dominioEmpresa: dominio,
-      );
-
-      await _firestore.collection(FirestoreColecoes.usuarios).doc(userCredential.user!.uid).set(novoUsuario.toMap());
+      final uid = resultado['uid']?.toString();
+      if (uid == null || uid.isEmpty) return false;
 
       final dbHelper = DatabaseHelper();
-      // Autenticação real é feita via Firebase Auth; a senha não é replicada no cache local
-      await dbHelper.insertUsuario({
-        'nome': novoUsuario.nome,
-        'cpf': novoUsuario.cpf,
-        'email': novoUsuario.email,
-        'perfil': novoUsuario.perfil.name,
-        'dominio_empresa': novoUsuario.dominioEmpresa,
-      });
+      try {
+        // A conta e o perfil já foram criados no servidor; o cache local é apenas apoio offline.
+        await dbHelper.insertUsuario({
+          'nome': nome.trim(),
+          'cpf': cpf.trim(),
+          'email': emailTratado,
+          'perfil': perfil.name,
+          'dominio_empresa': dominio,
+        });
+      } catch (e) {
+        debugPrint('Usuário criado no servidor, mas não foi cacheado localmente: $e');
+      }
 
       return true;
-    } on FirebaseAuthException catch (e) {
-      if (e.code == 'email-already-in-use') {
-        return false;
-      }
-      debugPrint('Falha ao criar usuário no Firebase Auth: ${e.code} - ${e.message}');
-      return false;
     } catch (e) {
       debugPrint('Falha ao criar usuário no Firebase Auth: $e');
       return false;

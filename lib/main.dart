@@ -1,15 +1,19 @@
 // lib/main.dart
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 // Importa o openDatabase global
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'firebase_options.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'auth_service.dart';
 import 'database_helper.dart';
+import 'database_recovery_page.dart';
 import 'home_page.dart';
+import 'offline_authorization_service.dart';
 
 final AuthService _authService = AuthService();
 
@@ -18,9 +22,7 @@ void main() async {
   // antes de qualquer inicialização ou registro de plugin, sanando o erro de Isolate no Windows.
   WidgetsFlutterBinding.ensureInitialized();
 
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
   FirebaseFirestore.instance.settings = const Settings(
     persistenceEnabled: true, // Garante que os dados fiquem salvos no disco
     cacheSizeBytes: -1, // Cache sem limite rígido
@@ -31,13 +33,65 @@ void main() async {
   }
 
   final dbHelper = DatabaseHelper();
-  await dbHelper.sincronizarProjetosPendentes();
-  
-  runApp(const MyApp());
+  Object? erroBancoLocal;
+  try {
+    await dbHelper.database;
+  } catch (erro, stackTrace) {
+    erroBancoLocal = erro;
+    debugPrint('Falha ao inicializar o banco local: $erro\n$stackTrace');
+  }
+  if (erroBancoLocal == null) {
+    try {
+      await dbHelper.sincronizarProjetosPendentes();
+    } catch (erro, stackTrace) {
+      debugPrint(
+        'Falha na sincronização inicial de projetos: $erro\n$stackTrace',
+      );
+    }
+    _observarRetornoDaConectividade(dbHelper);
+  }
+
+  runApp(MyApp(erroBancoLocal: erroBancoLocal));
+}
+
+void _observarRetornoDaConectividade(DatabaseHelper dbHelper) {
+  Connectivity().onConnectivityChanged.listen((resultados) {
+    if (!resultados.any((resultado) => resultado != ConnectivityResult.none)) {
+      return;
+    }
+
+    unawaited(
+      OfflineAuthorizationService.instance.sincronizarChavesOnline().then(
+        (_) {},
+        onError: (Object erro, StackTrace _) {
+          debugPrint(
+            'Falha ao sincronizar chaves de autorização offline: $erro',
+          );
+        },
+      ),
+    );
+    unawaited(
+      dbHelper.sincronizarProjetosPendentes().then(
+        (sincronizados) {
+          if (sincronizados > 0) {
+            debugPrint(
+              '$sincronizados projeto(s) sincronizado(s) após retorno da conexão.',
+            );
+          }
+        },
+        onError: (Object erro, StackTrace _) {
+          debugPrint('Falha ao sincronizar após retorno da conexão: $erro');
+        },
+      ),
+    );
+  });
 }
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  final Object? erroBancoLocal;
+  final Future<String?> Function(BuildContext context)? capturadorFoto;
+
+  const MyApp({super.key, this.erroBancoLocal, this.capturadorFoto});
 
   @override
   Widget build(BuildContext context) {
@@ -47,20 +101,26 @@ class MyApp extends StatelessWidget {
       theme: ThemeData(
         primarySwatch: Colors.blue,
         inputDecorationTheme: InputDecorationTheme(
-          border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(12),
-          ),
+          border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
           filled: true,
           fillColor: Colors.grey[100],
         ),
       ),
-      home: const LoginPage(),
+      home: erroBancoLocal == null
+          ? LoginPage(capturadorFoto: capturadorFoto)
+          : DatabaseRecoveryPage(
+              onRecuperado: () =>
+                  _observarRetornoDaConectividade(DatabaseHelper()),
+              paginaInicial: (_) => const LoginPage(),
+            ),
     );
   }
 }
 
 class LoginPage extends StatefulWidget {
-  const LoginPage({super.key});
+  final Future<String?> Function(BuildContext context)? capturadorFoto;
+
+  const LoginPage({super.key, this.capturadorFoto});
 
   @override
   State<LoginPage> createState() => _LoginPageState();
@@ -70,8 +130,9 @@ class _LoginPageState extends State<LoginPage> {
   final _formKey = GlobalKey<FormState>();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
-  final _emailRecuperacaoController = TextEditingController(); // Novo controlador para recuperação
-  
+  final _emailRecuperacaoController =
+      TextEditingController(); // Novo controlador para recuperação
+
   bool _obscurePassword = true;
   bool _modoRecuperacao = false; // Define se exibe o Login ou a Recuperação
 
@@ -100,6 +161,33 @@ class _LoginPageState extends State<LoginPage> {
       Navigator.of(context).pop(); // Fecha o carregamento
 
       if (perfilLogado != null) {
+        unawaited(
+          OfflineAuthorizationService.instance
+              .sincronizarChavesOnline()
+              .timeout(const Duration(seconds: 3))
+              .then(
+                (_) {},
+                onError: (Object erro, StackTrace _) {
+                  debugPrint(
+                    'Falha ao sincronizar autorizações offline após login: $erro',
+                  );
+                },
+              ),
+        );
+        unawaited(
+          DatabaseHelper()
+              .sincronizarProjetosPendentes()
+              .timeout(const Duration(seconds: 10))
+              .then(
+                (_) {},
+                onError: (Object erro, StackTrace _) {
+                  debugPrint(
+                    'Falha ao sincronizar projetos pendentes após login: $erro',
+                  );
+                },
+              ),
+        );
+        if (!mounted) return;
         Navigator.push(
           context,
           MaterialPageRoute(
@@ -107,6 +195,7 @@ class _LoginPageState extends State<LoginPage> {
               perfil: perfilLogado.perfil,
               nomeUsuario: perfilLogado.nome,
               emailUsuario: _emailController.text,
+              capturadorFoto: widget.capturadorFoto,
             ),
           ),
         );
@@ -131,7 +220,7 @@ class _LoginPageState extends State<LoginPage> {
       );
 
       final email = _emailRecuperacaoController.text.trim();
-      
+
       // Realiza a chamada direta para o envio do e-mail do Firebase Auth
       bool enviado = await _authService.enviarEmailRecuperacao(email);
 
@@ -141,20 +230,25 @@ class _LoginPageState extends State<LoginPage> {
       if (enviado) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('E-mail de recuperação enviado para $email com sucesso! Verifique sua caixa de entrada.'),
+            content: Text(
+              'E-mail de recuperação enviado para $email com sucesso! Verifique sua caixa de entrada.',
+            ),
             backgroundColor: Colors.green,
             duration: const Duration(seconds: 4),
           ),
         );
-        
+
         _emailRecuperacaoController.clear();
         setState(() {
-          _modoRecuperacao = false; // Retorna automaticamente para a tela de login
+          _modoRecuperacao =
+              false; // Retorna automaticamente para a tela de login
         });
       } else {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('Erro: Não foi possível enviar o e-mail. Verifique se o e-mail está cadastrado e correto.'),
+            content: Text(
+              'Erro: Não foi possível enviar o e-mail. Verifique se o e-mail está cadastrado e correto.',
+            ),
             backgroundColor: Colors.red,
           ),
         );
@@ -178,7 +272,7 @@ class _LoginPageState extends State<LoginPage> {
                 children: [
                   Image.asset('assets/images/logo.png', height: 100),
                   const SizedBox(height: 16),
-                  
+
                   // Título dinâmico baseado no modo atual
                   Text(
                     _modoRecuperacao ? 'Recuperar Senha' : 'Bem-vindo de volta',
@@ -197,6 +291,9 @@ class _LoginPageState extends State<LoginPage> {
                     TextFormField(
                       controller: _emailController,
                       keyboardType: TextInputType.emailAddress,
+                      textInputAction: TextInputAction.next,
+                      onFieldSubmitted: (_) =>
+                          FocusScope.of(context).nextFocus(),
                       decoration: const InputDecoration(
                         labelText: 'E-mail ou Usuário',
                         prefixIcon: Icon(Icons.person_outline),
@@ -212,12 +309,16 @@ class _LoginPageState extends State<LoginPage> {
                     TextFormField(
                       controller: _passwordController,
                       obscureText: _obscurePassword,
+                      textInputAction: TextInputAction.done,
+                      onFieldSubmitted: (_) => _submitLogin(),
                       decoration: InputDecoration(
                         labelText: 'Senha',
                         prefixIcon: const Icon(Icons.lock_outline),
                         suffixIcon: IconButton(
                           icon: Icon(
-                            _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                            _obscurePassword
+                                ? Icons.visibility_off
+                                : Icons.visibility,
                           ),
                           onPressed: () {
                             setState(() {
@@ -244,7 +345,10 @@ class _LoginPageState extends State<LoginPage> {
                         },
                         child: const Text(
                           'Esqueceu a senha?',
-                          style: TextStyle(color: Colors.blue, fontWeight: FontWeight.w600),
+                          style: TextStyle(
+                            color: Colors.blue,
+                            fontWeight: FontWeight.w600,
+                          ),
                         ),
                       ),
                     ),
@@ -261,7 +365,10 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       child: const Text(
                         'Entrar',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                   ] else ...[
@@ -269,7 +376,11 @@ class _LoginPageState extends State<LoginPage> {
                     const Text(
                       'Digite seu email para recuperar a senha',
                       textAlign: TextAlign.center,
-                      style: TextStyle(fontSize: 16, color: Colors.black87, fontWeight: FontWeight.w500),
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.black87,
+                        fontWeight: FontWeight.w500,
+                      ),
                     ),
                     const SizedBox(height: 20),
                     TextFormField(
@@ -302,7 +413,10 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                       child: const Text(
                         'Recuperar Senha',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                        ),
                       ),
                     ),
                     const SizedBox(height: 12),
@@ -314,7 +428,10 @@ class _LoginPageState extends State<LoginPage> {
                       },
                       child: const Text(
                         'Voltar para o Login',
-                        style: TextStyle(color: Colors.grey, fontWeight: FontWeight.w600),
+                        style: TextStyle(
+                          color: Colors.grey,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                   ],

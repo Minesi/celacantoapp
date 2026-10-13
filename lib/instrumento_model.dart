@@ -19,9 +19,9 @@ class InstrumentoModel {
       final ano = int.parse(partes[1]);
       if (mes < 1 || mes > 12) return false;
 
-      final dataLimite = DateTime(ano, mes + 1, 0, 23, 59, 59);
       final agora = DateTime.now();
-      return agora.isBefore(dataLimite) || agora.isAtSameMomentAs(dataLimite);
+      if (ano != agora.year) return ano > agora.year;
+      return mes >= agora.month;
     } catch (_) {
       return false;
     }

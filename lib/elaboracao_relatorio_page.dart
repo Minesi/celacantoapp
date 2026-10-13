@@ -43,13 +43,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
   final ProjetoService _projetoService = ProjetoService();
   final TesteCatalogoService _testeCatalogoService = TesteCatalogoService();
 
-  static const List<String> _tiposDeProjeto = [
-    'Fluxo Laminar',
-    'Ar Comprimido',
-    'Cabine de Exaustão',
-    'HVAC',
-    'Teste',
-  ];
+  static const List<String> _tiposDeProjeto = EnsaioModel.tiposDeProjeto;
 
   bool _carregando = true;
   bool _salvando = false;
@@ -62,6 +56,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
   String? _tipoProjetoSelecionado;
   SistemaModel? _sistemaSelecionado;
   final _areaController = TextEditingController();
+  final _validadeController = TextEditingController(text: '12');
 
   final List<SalaModel> _salas = [];
   final List<HandlingUnitModel> _handlingUnits = [];
@@ -90,6 +85,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
   @override
   void dispose() {
     _areaController.dispose();
+    _validadeController.dispose();
     _cnpjRapidoController.dispose();
     _razaoSocialRapidoController.dispose();
     _nomeFantasiaRapidoController.dispose();
@@ -268,6 +264,8 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
     final filtrosTemp = <FiltroModel>[];
     GrauSala grauSelecionado = GrauSala.d;
     String handlingUnitIdSelecionado = _handlingUnits.first.id;
+    bool atendidaPorMaisMaquinas = false;
+    final idsAdicionais = <String>[];
 
     showModalBottomSheet(
       context: context,
@@ -329,30 +327,108 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                             initialValue: handlingUnitIdSelecionado,
                             decoration: const InputDecoration(labelText: 'Máquina que atende'),
                             items: _handlingUnits
-                                .map((h) => DropdownMenuItem(value: h.id, child: Text(h.nome, overflow: TextOverflow.ellipsis)))
+                                .map((h) => DropdownMenuItem(
+                                      value: h.id,
+                                      child: Text('${h.nome}${h.numero.isEmpty ? '' : ' #${h.numero}'}', overflow: TextOverflow.ellipsis),
+                                    ))
                                 .toList(),
-                            onChanged: (id) => setModalState(() => handlingUnitIdSelecionado = id ?? handlingUnitIdSelecionado),
+                            onChanged: (id) => setModalState(() {
+                              handlingUnitIdSelecionado = id ?? handlingUnitIdSelecionado;
+                              idsAdicionais.remove(handlingUnitIdSelecionado);
+                            }),
                           ),
                         ),
                       ],
                     ),
+                    if (_handlingUnits.length > 1) ...[
+                      CheckboxListTile(
+                        contentPadding: EdgeInsets.zero,
+                        controlAffinity: ListTileControlAffinity.leading,
+                        value: atendidaPorMaisMaquinas,
+                        title: const Text('Sala atendida por mais de uma máquina'),
+                        onChanged: (v) => setModalState(() {
+                          atendidaPorMaisMaquinas = v ?? false;
+                          if (!atendidaPorMaisMaquinas) idsAdicionais.clear();
+                        }),
+                      ),
+                      if (atendidaPorMaisMaquinas) ...[
+                        for (var i = 0; i < idsAdicionais.length; i++)
+                          Row(
+                            children: [
+                              Expanded(
+                                child: DropdownButtonFormField<String>(
+                                  key: ValueKey('maquina-adicional-$i-${idsAdicionais[i]}'),
+                                  initialValue: idsAdicionais[i],
+                                  decoration: InputDecoration(labelText: 'Máquina adicional ${i + 1}'),
+                                  items: _handlingUnits
+                                      .where((h) =>
+                                          h.id == idsAdicionais[i] ||
+                                          (h.id != handlingUnitIdSelecionado && !idsAdicionais.contains(h.id)))
+                                      .map((h) => DropdownMenuItem(value: h.id, child: Text(h.nome, overflow: TextOverflow.ellipsis)))
+                                      .toList(),
+                                  onChanged: (id) => setModalState(() => idsAdicionais[i] = id ?? idsAdicionais[i]),
+                                ),
+                              ),
+                              IconButton(
+                                icon: const Icon(Icons.remove_circle_outline, color: Colors.red),
+                                onPressed: () => setModalState(() => idsAdicionais.removeAt(i)),
+                              ),
+                            ],
+                          ),
+                        Builder(builder: (_) {
+                          final disponiveis = _handlingUnits
+                              .where((h) => h.id != handlingUnitIdSelecionado && !idsAdicionais.contains(h.id))
+                              .toList();
+                          return Align(
+                            alignment: Alignment.centerLeft,
+                            child: TextButton.icon(
+                              onPressed: disponiveis.isEmpty
+                                  ? null
+                                  : () => setModalState(() => idsAdicionais.add(disponiveis.first.id)),
+                              icon: const Icon(Icons.add, size: 16),
+                              label: const Text('Adicionar máquina'),
+                            ),
+                          );
+                        }),
+                      ],
+                    ],
                     const SizedBox(height: 16),
-                    const Text('Filtros (saídas) da Sala', style: TextStyle(fontWeight: FontWeight.bold)),
+                    const Text('Filtros da Sala', style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
-                    _EditorFiltros(filtros: filtrosTemp, localizacao: LocalizacaoFiltro.terminal),
+                    _EditorFiltrosSala(
+                      key: ValueKey(handlingUnitIdSelecionado),
+                      maquina: _handlingUnits.firstWhere((h) => h.id == handlingUnitIdSelecionado),
+                      salasExistentes: _salas,
+                      filtros: filtrosTemp,
+                    ),
                     const SizedBox(height: 20),
                     ElevatedButton(
                       onPressed: () {
                         if (nomeController.text.trim().isEmpty) return;
+                        final salaId = 'SALA-${DateTime.now().microsecondsSinceEpoch}';
                         setState(() {
                           _salas.add(SalaModel(
-                            id: 'SALA-${DateTime.now().microsecondsSinceEpoch}',
+                            id: salaId,
                             nome: nomeController.text.trim(),
                             area: double.tryParse(areaController.text.replaceAll(',', '.')) ?? 0,
                             volume: double.tryParse(volumeController.text.replaceAll(',', '.')) ?? 0,
                             grau: grauSelecionado,
                             handlingUnitId: handlingUnitIdSelecionado,
-                            filtros: List<FiltroModel>.from(filtrosTemp),
+                            handlingUnitIdsAdicionais: List<String>.from(idsAdicionais),
+                            filtros: filtrosTemp.asMap().entries
+                                .map((entry) {
+                                  final filtro = entry.value;
+                                  return FiltroModel(
+                                    id: '$salaId-FILTRO-${entry.key}',
+                                    tipo: filtro.tipo,
+                                    quantidade: filtro.quantidade,
+                                    localizacao: filtro.localizacao,
+                                    marca: filtro.marca,
+                                    modelo: filtro.modelo,
+                                    dimensoes: filtro.dimensoes,
+                                  );
+                                })
+                                .toList(),
                           ));
                         });
                         Navigator.of(context).pop();
@@ -373,6 +449,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
 
   void _abrirModalNovaHandlingUnit() {
     final nomeController = TextEditingController();
+    final numeroController = TextEditingController();
     final filtrosTemp = <FiltroModel>[];
 
     showModalBottomSheet(
@@ -396,6 +473,11 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                       controller: nomeController,
                       decoration: const InputDecoration(labelText: 'Nome/Identificação da Máquina', prefixIcon: Icon(Icons.hvac_outlined)),
                     ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: numeroController,
+                      decoration: const InputDecoration(labelText: 'Número da Máquina', prefixIcon: Icon(Icons.tag_outlined)),
+                    ),
                     const SizedBox(height: 16),
                     const Text('Filtros internos da Máquina (informativo)', style: TextStyle(fontWeight: FontWeight.bold)),
                     const SizedBox(height: 8),
@@ -408,6 +490,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                           _handlingUnits.add(HandlingUnitModel(
                             id: 'HU-${DateTime.now().microsecondsSinceEpoch}',
                             nome: nomeController.text.trim(),
+                            numero: numeroController.text.trim(),
                             filtros: List<FiltroModel>.from(filtrosTemp),
                           ));
                         });
@@ -437,10 +520,167 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
     return ferramentas.toList();
   }
 
+  String _chaveFiltro(FiltroModel filtro) => [
+        filtro.tipo.name,
+        filtro.marca.trim().toLowerCase(),
+        filtro.modelo.trim().toLowerCase(),
+        filtro.dimensoes.trim().toLowerCase(),
+      ].join('|');
+
+  Map<String, int> _quantidadesPorEspecificacao(Iterable<FiltroModel> filtros) {
+    final quantidades = <String, int>{};
+    for (final filtro in filtros) {
+      final chave = _chaveFiltro(filtro);
+      quantidades[chave] = (quantidades[chave] ?? 0) + filtro.quantidade;
+    }
+    return quantidades;
+  }
+
+  void _atualizarConfiguracaoEnsaio(SalaModel sala, TipoEnsaio tipo, String campo, dynamic valor) {
+    final configuracao = <String, dynamic>{
+      ...?sala.configEnsaios[tipo.name],
+      campo: valor,
+    };
+    final indice = _salas.indexWhere((item) => item.id == sala.id);
+    if (indice < 0) return;
+    setState(() {
+      _salas[indice] = SalaModel(
+        id: sala.id,
+        nome: sala.nome,
+        area: sala.area,
+        volume: sala.volume,
+        grau: sala.grau,
+        handlingUnitId: sala.handlingUnitId,
+        handlingUnitIdsAdicionais: sala.handlingUnitIdsAdicionais,
+        filtros: sala.filtros,
+        configEnsaios: {
+          ...sala.configEnsaios,
+          tipo.name: configuracao,
+        },
+      );
+    });
+  }
+
+  Widget _configuracaoEnsaiosDasSalas() {
+    if (_salas.isEmpty || _ensaiosSelecionados.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        const Text('Configuração por sala', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        const SizedBox(height: 8),
+        ..._salas.expand((sala) {
+          return [
+            Text(sala.nome, style: const TextStyle(fontWeight: FontWeight.w600)),
+            const SizedBox(height: 6),
+            ..._ensaiosSelecionados.map((tipo) {
+              final configuracao = sala.configEnsaios[tipo.name] ?? const <String, dynamic>{};
+              final ensaio = EnsaioModel.catalogoPadrao().firstWhere((item) => item.tipo == tipo);
+              final exigePontos = {
+                TipoEnsaio.velocidadeFluxo,
+                TipoEnsaio.nivelRuido,
+                TipoEnsaio.luminosidade,
+                TipoEnsaio.paralelismoFluxo,
+                TipoEnsaio.visualizacaoFluxo,
+              }.contains(tipo);
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Expanded(
+                      flex: 2,
+                      child: Text(ensaio.nome, style: const TextStyle(fontSize: 13)),
+                    ),
+                    if (exigePontos)
+                      Expanded(
+                        child: TextFormField(
+                          initialValue: configuracao['pontos']?.toString() ?? '',
+                          keyboardType: TextInputType.number,
+                          decoration: InputDecoration(
+                            labelText: tipo == TipoEnsaio.velocidadeFluxo ? 'Pontos/filtro' : 'Pontos',
+                            isDense: true,
+                          ),
+                          onChanged: (valor) => _atualizarConfiguracaoEnsaio(sala, tipo, 'pontos', valor),
+                        ),
+                      ),
+                    if (tipo == TipoEnsaio.contagemParticulas)
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: (configuracao['estado'] ?? 'repouso').toString(),
+                          decoration: const InputDecoration(labelText: 'Estado', isDense: true),
+                          items: const [
+                            DropdownMenuItem(value: 'repouso', child: Text('Repouso')),
+                            DropdownMenuItem(value: 'operacao', child: Text('Operação')),
+                          ],
+                          onChanged: (valor) => _atualizarConfiguracaoEnsaio(sala, tipo, 'estado', valor ?? 'repouso'),
+                        ),
+                      ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      flex: 2,
+                      child: TextFormField(
+                        initialValue: configuracao['criterio']?.toString() ?? '',
+                        decoration: const InputDecoration(labelText: 'Critério', isDense: true),
+                        onChanged: (valor) => _atualizarConfiguracaoEnsaio(sala, tipo, 'criterio', valor),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+            const Divider(height: 16),
+          ];
+        }),
+      ],
+    );
+  }
+
+  String? _validarEstruturaAntesDeSalvar() {
+    if (_empresaSelecionada == null) return 'Selecione a empresa cliente.';
+    if (_tipoProjetoSelecionado == null) return 'Selecione o tipo de projeto.';
+    if (_sistemaSelecionado == null) return 'Selecione o sistema.';
+    if (_areaController.text.trim().isEmpty) return 'Informe a área atendida.';
+    if ((int.tryParse(_validadeController.text.trim()) ?? 0) < 1) return 'Informe a validade dos testes em meses.';
+    if (_handlingUnits.isEmpty) return 'Adicione pelo menos uma máquina.';
+    if (_salas.isEmpty) return 'Adicione pelo menos uma sala.';
+    if (_ensaiosSelecionados.isEmpty) return 'Selecione pelo menos um ensaio.';
+
+    const pontosVariaveis = {
+      TipoEnsaio.velocidadeFluxo,
+      TipoEnsaio.nivelRuido,
+      TipoEnsaio.luminosidade,
+      TipoEnsaio.paralelismoFluxo,
+      TipoEnsaio.visualizacaoFluxo,
+    };
+    for (final sala in _salas) {
+      for (final tipo in _ensaiosSelecionados.where(pontosVariaveis.contains)) {
+        final pontos = int.tryParse(sala.configEnsaios[tipo.name]?['pontos']?.toString() ?? '') ?? 0;
+        if (pontos < 1) {
+          return 'Defina a quantidade de pontos de ${EnsaioModel.catalogoPadrao().firstWhere((e) => e.tipo == tipo).nome} para a sala ${sala.nome}.';
+        }
+      }
+    }
+
+    for (final maquina in _handlingUnits) {
+      final filtrosDaMaquina = _quantidadesPorEspecificacao(maquina.filtros);
+      final filtrosDasSalas = _quantidadesPorEspecificacao(
+        _salas.where((sala) => sala.handlingUnitId == maquina.id).expand((sala) => sala.filtros),
+      );
+      if (filtrosDaMaquina.length != filtrosDasSalas.length ||
+          filtrosDaMaquina.entries.any((entry) => filtrosDasSalas[entry.key] != entry.value)) {
+        return 'Distribua nas salas todos os filtros da máquina ${maquina.nome}, mantendo tipo, marca, modelo e dimensões.';
+      }
+    }
+    return null;
+  }
+
   void _salvarElaboracao() async {
-    if (_empresaSelecionada == null || _tipoProjetoSelecionado == null || _salvando) {
+    if (_salvando) return;
+    final erroEstrutura = _validarEstruturaAntesDeSalvar();
+    if (erroEstrutura != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecione a empresa e o tipo de projeto.'), backgroundColor: Colors.amber),
+        SnackBar(content: Text(erroEstrutura), backgroundColor: Colors.amber),
       );
       return;
     }
@@ -478,6 +718,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
       salas: List<SalaModel>.from(_salas),
       handlingUnits: List<HandlingUnitModel>.from(_handlingUnits),
       ensaiosSelecionados: _ensaiosSelecionados.map((t) => t.name).toList(),
+      validadeTestesMeses: int.tryParse(_validadeController.text.trim()),
       // O relatório "nasce pronto" para o técnico assim que a elaboração é concluída.
       status: StatusRelatorio.prontoParaCampo,
       history: [
@@ -542,7 +783,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: const Text('Remover máquina'),
-          content: Text('${h.nome} atende ${salasAtendidas.length} sala(s). Elas também serão removidas.'),
+          content: Text('${h.nome} é a máquina principal de ${salasAtendidas.length} sala(s). Elas também serão removidas.'),
           actions: [
             TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancelar')),
             ElevatedButton(onPressed: () => Navigator.of(ctx).pop(true), child: const Text('Remover')),
@@ -553,6 +794,21 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
     }
     setState(() {
       _salas.removeWhere((s) => s.handlingUnitId == h.id);
+      for (var i = 0; i < _salas.length; i++) {
+        final s = _salas[i];
+        if (!s.handlingUnitIdsAdicionais.contains(h.id)) continue;
+        _salas[i] = SalaModel(
+          id: s.id,
+          nome: s.nome,
+          area: s.area,
+          volume: s.volume,
+          grau: s.grau,
+          handlingUnitId: s.handlingUnitId,
+          handlingUnitIdsAdicionais: s.handlingUnitIdsAdicionais.where((id) => id != h.id).toList(),
+          filtros: s.filtros,
+                            configEnsaios: s.configEnsaios,
+        );
+      }
       _handlingUnits.remove(h);
     });
   }
@@ -635,7 +891,11 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                     initialValue: _tipoProjetoSelecionado,
                     decoration: const InputDecoration(prefixIcon: Icon(Icons.category_outlined), hintText: 'Selecione o escopo do relatório'),
                     items: _tiposDeProjeto.map((t) => DropdownMenuItem(value: t, child: Text(t))).toList(),
-                    onChanged: (t) => setState(() => _tipoProjetoSelecionado = t),
+                    onChanged: (t) => setState(() {
+                      _tipoProjetoSelecionado = t;
+                      final aplicaveis = EnsaioModel.catalogoDoTipo(t).map((e) => e.tipo).toSet();
+                      _ensaiosSelecionados.retainWhere(aplicaveis.contains);
+                    }),
                   ),
                   const SizedBox(height: 20),
                   Row(
@@ -660,6 +920,12 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                     controller: _areaController,
                     decoration: const InputDecoration(labelText: 'Área atendida pelo sistema', prefixIcon: Icon(Icons.map_outlined)),
                   ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _validadeController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Validade dos testes (meses)', prefixIcon: Icon(Icons.event_repeat_outlined)),
+                  ),
                   const SizedBox(height: 28),
 
                   Row(
@@ -677,12 +943,13 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                     const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('Nenhuma máquina adicionada ainda.', style: TextStyle(color: Colors.grey)))
                   else
                     ..._handlingUnits.map((h) {
-                      final atendidas = _salas.where((s) => s.handlingUnitId == h.id).map((s) => s.nome).toList();
+                      final atendidas = _salas.where((s) => s.atendidaPor(h.id)).map((s) => s.nome).toList();
                       return Card(
                         child: ListTile(
                           title: Text(h.nome),
                           subtitle: Text(
-                            '${h.filtros.isEmpty ? 'Sem filtros internos' : h.filtros.map((f) => '${f.quantidade}× ${f.tipo.name.toUpperCase()}').join(', ')}'
+                            '${h.numero.isEmpty ? '' : 'Número: ${h.numero}\n'}'
+                            '${h.filtros.isEmpty ? 'Sem filtros internos' : h.filtros.map((f) => f.descricao).join(', ')}'
                             '\nSalas atendidas: ${atendidas.isEmpty ? 'nenhuma' : atendidas.join(', ')}',
                           ),
                           isThreeLine: true,
@@ -710,14 +977,18 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                     const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: Text('Nenhuma sala adicionada ainda.', style: TextStyle(color: Colors.grey)))
                   else
                     ..._salas.map((s) {
-                      final maquina = _handlingUnits.where((h) => h.id == s.handlingUnitId).firstOrNull;
+                      final maquinas = s.handlingUnitIds
+                          .map((id) => _handlingUnits.where((h) => h.id == id).firstOrNull?.nome)
+                          .whereType<String>()
+                          .toList();
                       final filtros = s.filtros.isEmpty
                           ? 'sem filtros'
-                          : s.filtros.map((f) => '${f.quantidade}× ${f.tipo.name.toUpperCase()}').join(', ');
+                          : s.filtros.map((f) => f.descricao).join(', ');
                       return Card(
                         child: ListTile(
                           title: Text('${s.nome} — Grau ${s.grau.name.toUpperCase()}'),
-                          subtitle: Text('${s.area} m² · ${s.volume} m³ · $filtros\nMáquina: ${maquina?.nome ?? '-'}'),
+                          subtitle: Text(
+                              '${s.area} m² · ${s.volume} m³ · $filtros\nMáquina${maquinas.length > 1 ? 's' : ''}: ${maquinas.isEmpty ? '-' : maquinas.join(', ')}'),
                           isThreeLine: true,
                           trailing: IconButton(
                             icon: const Icon(Icons.delete_outline, color: Colors.red),
@@ -729,7 +1000,15 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                   const SizedBox(height: 20),
 
                   const Text('Ensaios', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-                  ...EnsaioModel.catalogoPadrao().expand((ensaio) {
+                  if (_tipoProjetoSelecionado == null)
+                    const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 8),
+                      child: Text('Selecione o tipo de projeto para ver os ensaios.', style: TextStyle(color: Colors.grey)),
+                    ),
+                  ...(_tipoProjetoSelecionado == null
+                          ? const <EnsaioModel>[]
+                          : EnsaioModel.catalogoDoTipo(_tipoProjetoSelecionado))
+                      .expand((ensaio) {
                     final selecionado = _ensaiosSelecionados.contains(ensaio.tipo);
                     final resumoController = _resumoControllers[ensaio.tipo.name];
                     return [
@@ -761,6 +1040,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                         ),
                     ];
                   }),
+                  _configuracaoEnsaiosDasSalas(),
                   const SizedBox(height: 28),
 
                   ElevatedButton(
@@ -776,8 +1056,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
   }
 }
 
-/// Editor de filtros G4/F9/H14 (tipo + quantidade) usado nos modais de máquina e de sala.
-/// Muta diretamente a lista recebida.
+/// Editor dinâmico de filtros (tipo × quantidade + marca/modelo/dimensões); muta a lista recebida.
 class _EditorFiltros extends StatefulWidget {
   final List<FiltroModel> filtros;
   final LocalizacaoFiltro localizacao;
@@ -788,14 +1067,151 @@ class _EditorFiltros extends StatefulWidget {
   State<_EditorFiltros> createState() => _EditorFiltrosState();
 }
 
+class _LinhaFiltro {
+  final String id;
+  TipoFiltro tipo;
+  final quantidade = TextEditingController(text: '0');
+  final marca = TextEditingController();
+  final modelo = TextEditingController();
+  final dimensoes = TextEditingController();
+
+  _LinhaFiltro(this.id, this.tipo);
+
+  int get qtd => int.tryParse(quantidade.text.trim()) ?? 0;
+
+  void dispose() {
+    quantidade.dispose();
+    marca.dispose();
+    modelo.dispose();
+    dimensoes.dispose();
+  }
+}
+
 class _EditorFiltrosState extends State<_EditorFiltros> {
-  TipoFiltro _tipo = TipoFiltro.g4;
-  final _qtdController = TextEditingController(text: '1');
+  static const List<String> _marcasSugeridas = ['Trox'];
+  final List<_LinhaFiltro> _linhas = [];
+  int _sequencia = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Uma linha por categoria (grosso/fino/absoluto); só entram no relatório as com quantidade > 0.
+    for (final tipo in TipoFiltro.values) {
+      _linhas.add(_novaLinha(tipo));
+    }
+  }
+
+  _LinhaFiltro _novaLinha(TipoFiltro tipo) {
+    final linha = _LinhaFiltro('FILTRO-${DateTime.now().microsecondsSinceEpoch}-${_sequencia++}', tipo);
+    for (final c in [linha.quantidade, linha.marca, linha.modelo, linha.dimensoes]) {
+      c.addListener(_sincronizar);
+    }
+    return linha;
+  }
+
+  void _sincronizar() {
+    widget.filtros
+      ..clear()
+      ..addAll(_linhas.where((l) => l.qtd > 0).map((l) => FiltroModel(
+            id: l.id,
+            tipo: l.tipo,
+            quantidade: l.qtd,
+            localizacao: widget.localizacao,
+            marca: l.marca.text.trim(),
+            modelo: l.modelo.text.trim(),
+            dimensoes: l.dimensoes.text.trim(),
+          )));
+  }
 
   @override
   void dispose() {
-    _qtdController.dispose();
+    for (final l in _linhas) {
+      l.dispose();
+    }
     super.dispose();
+  }
+
+  Widget _buildLinha(_LinhaFiltro linha) {
+    return Container(
+      key: ValueKey(linha.id),
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        border: Border.all(color: linha.qtd > 0 ? Colors.blue.shade200 : Colors.grey.shade300),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Column(
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<TipoFiltro>(
+                  initialValue: linha.tipo,
+                  decoration: const InputDecoration(labelText: 'Tipo de filtro', isDense: true),
+                  items: TipoFiltro.values.map((t) => DropdownMenuItem(value: t, child: Text(t.rotulo))).toList(),
+                  onChanged: (t) => setState(() {
+                    linha.tipo = t ?? linha.tipo;
+                    _sincronizar();
+                  }),
+                ),
+              ),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 70,
+                child: TextField(
+                  controller: linha.quantidade,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(labelText: 'Qtd.', isDense: true),
+                  onChanged: (_) => setState(() {}),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Remover linha',
+                icon: const Icon(Icons.delete_outline, color: Colors.red),
+                onPressed: () => setState(() {
+                  _linhas.remove(linha);
+                  linha.dispose();
+                  _sincronizar();
+                }),
+              ),
+            ],
+          ),
+          if (linha.qtd > 0)
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    controller: linha.marca,
+                    decoration: InputDecoration(
+                      labelText: 'Marca',
+                      isDense: true,
+                      suffixIcon: PopupMenuButton<String>(
+                        icon: const Icon(Icons.arrow_drop_down),
+                        onSelected: (m) => linha.marca.text = m,
+                        itemBuilder: (_) => _marcasSugeridas.map((m) => PopupMenuItem(value: m, child: Text(m))).toList(),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: linha.modelo,
+                    decoration: const InputDecoration(labelText: 'Modelo', isDense: true),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: TextField(
+                    controller: linha.dimensoes,
+                    decoration: const InputDecoration(labelText: 'Dimensões', hintText: '610x610x48', isDense: true),
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -803,53 +1219,161 @@ class _EditorFiltrosState extends State<_EditorFiltros> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Row(
-          children: [
-            Expanded(
-              child: DropdownButtonFormField<TipoFiltro>(
-                initialValue: _tipo,
-                decoration: const InputDecoration(labelText: 'Tipo de filtro'),
-                items: TipoFiltro.values
-                    .map((t) => DropdownMenuItem(value: t, child: Text(t.name.toUpperCase())))
-                    .toList(),
-                onChanged: (t) => setState(() => _tipo = t ?? TipoFiltro.g4),
-              ),
-            ),
-            const SizedBox(width: 12),
-            SizedBox(
-              width: 80,
-              child: TextField(
-                controller: _qtdController,
-                keyboardType: TextInputType.number,
-                decoration: const InputDecoration(labelText: 'Qtd.'),
-              ),
-            ),
-            IconButton(
-              icon: const Icon(Icons.add_circle, color: Colors.blue),
-              onPressed: () {
-                final qtd = int.tryParse(_qtdController.text) ?? 0;
-                if (qtd <= 0) return;
-                setState(() {
-                  widget.filtros.add(FiltroModel(
-                    id: 'FILTRO-${DateTime.now().microsecondsSinceEpoch}',
-                    tipo: _tipo,
-                    quantidade: qtd,
-                    localizacao: widget.localizacao,
-                  ));
-                });
-              },
-            ),
-          ],
+        ..._linhas.map(_buildLinha),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton.icon(
+            onPressed: () => setState(() => _linhas.add(_novaLinha(TipoFiltro.h14))),
+            icon: const Icon(Icons.add, size: 16),
+            label: const Text('Adicionar linha de filtro'),
+          ),
         ),
-        ...widget.filtros.map((f) => ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              title: Text('${f.tipo.name.toUpperCase()} — ${f.quantidade} un.'),
-              trailing: IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                onPressed: () => setState(() => widget.filtros.remove(f)),
+        const Text('Filtros com quantidade 0 não entram no relatório.',
+            style: TextStyle(fontSize: 12, color: Colors.grey)),
+      ],
+    );
+  }
+}
+
+class _EditorFiltrosSala extends StatefulWidget {
+  final HandlingUnitModel maquina;
+  final List<SalaModel> salasExistentes;
+  final List<FiltroModel> filtros;
+
+  const _EditorFiltrosSala({super.key, required this.maquina, required this.salasExistentes, required this.filtros});
+
+  @override
+  State<_EditorFiltrosSala> createState() => _EditorFiltrosSalaState();
+}
+
+class _LinhaFiltroSala {
+  final FiltroModel base;
+  final int maxQuantidade;
+  final TextEditingController quantidade;
+
+  _LinhaFiltroSala({required this.base, required this.maxQuantidade}) : quantidade = TextEditingController(text: '0');
+
+  int get qtd => int.tryParse(quantidade.text.trim()) ?? 0;
+
+  String get descricao {
+    final detalhes = [
+      [base.marca, base.modelo].where((valor) => valor.isNotEmpty).join(' '),
+      base.dimensoes,
+    ].where((valor) => valor.isNotEmpty).join(', ');
+    return '${base.tipo.rotulo}${detalhes.isEmpty ? '' : ' ($detalhes)'}';
+  }
+
+  void dispose() => quantidade.dispose();
+}
+
+class _EditorFiltrosSalaState extends State<_EditorFiltrosSala> {
+  final List<_LinhaFiltroSala> _linhas = [];
+
+  String _chave(FiltroModel filtro) => [
+        filtro.tipo.name,
+        filtro.marca.trim().toLowerCase(),
+        filtro.modelo.trim().toLowerCase(),
+        filtro.dimensoes.trim().toLowerCase(),
+      ].join('|');
+
+  @override
+  void initState() {
+    super.initState();
+    final prototipos = <String, FiltroModel>{};
+    final totais = <String, int>{};
+    for (final filtro in widget.maquina.filtros) {
+      final chave = _chave(filtro);
+      prototipos[chave] = filtro;
+      totais[chave] = (totais[chave] ?? 0) + filtro.quantidade;
+    }
+
+    final usados = <String, int>{};
+    for (final sala in widget.salasExistentes.where((sala) => sala.handlingUnitId == widget.maquina.id)) {
+      for (final filtro in sala.filtros) {
+        final chave = _chave(filtro);
+        usados[chave] = (usados[chave] ?? 0) + filtro.quantidade;
+      }
+    }
+
+    for (final entrada in totais.entries) {
+      _linhas.add(
+        _LinhaFiltroSala(
+          base: prototipos[entrada.key]!,
+          maxQuantidade: (entrada.value - (usados[entrada.key] ?? 0)).clamp(0, entrada.value),
+        ),
+      );
+    }
+    _sincronizar();
+  }
+
+  void _sincronizar() {
+    widget.filtros
+      ..clear()
+      ..addAll(
+        _linhas.where((linha) => linha.qtd > 0).map(
+              (linha) => FiltroModel(
+                id: linha.base.id,
+                tipo: linha.base.tipo,
+                quantidade: linha.qtd,
+                localizacao: LocalizacaoFiltro.terminal,
+                marca: linha.base.marca,
+                modelo: linha.base.modelo,
+                dimensoes: linha.base.dimensoes,
               ),
-            )),
+            ),
+      );
+  }
+
+  void _alterarQuantidade(_LinhaFiltroSala linha, String texto) {
+    final valor = int.tryParse(texto.trim()) ?? 0;
+    if (valor > linha.maxQuantidade) {
+      linha.quantidade.text = linha.maxQuantidade.toString();
+      linha.quantidade.selection = TextSelection.collapsed(offset: linha.quantidade.text.length);
+    }
+    setState(_sincronizar);
+  }
+
+  @override
+  void dispose() {
+    for (final linha in _linhas) {
+      linha.dispose();
+    }
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_linhas.isEmpty) {
+      return const Text('A máquina selecionada não possui filtros cadastrados.');
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        ..._linhas.map(
+          (linha) => Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: Row(
+              children: [
+                Expanded(child: Text(linha.descricao)),
+                const SizedBox(width: 12),
+                SizedBox(
+                  width: 86,
+                  child: TextField(
+                    controller: linha.quantidade,
+                    enabled: linha.maxQuantidade > 0,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(labelText: 'Qtd.', helperText: 'Máx. ${linha.maxQuantidade}', isDense: true),
+                    onChanged: (texto) => _alterarQuantidade(linha, texto),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        const Text(
+          'A quantidade disponível considera somente esta máquina e as salas já cadastradas.',
+          style: TextStyle(fontSize: 12, color: Colors.grey),
+        ),
       ],
     );
   }

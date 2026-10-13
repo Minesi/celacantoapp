@@ -1,0 +1,28 @@
+rules_version = '2';
+
+service firebase.storage {
+  match /b/{bucket}/o {
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function perfilDoUsuarioLogado() {
+      return firestore.get(
+        /databases/(default)/documents/usuarios/$(request.auth.uid)
+      ).data.perfil;
+    }
+
+    match /evidencias/{projetoId}/{salaId}/{ensaioTipo}/{arquivo} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn()
+        && perfilDoUsuarioLogado() in ['tecnico', 'supervisor', 'admin']
+        && request.resource.size < 10 * 1024 * 1024
+        && request.resource.contentType.matches('image/.*');
+      allow update, delete: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

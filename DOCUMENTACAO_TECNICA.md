@@ -49,6 +49,10 @@ graph TD
 ### 4.1 Login / Cadastro (`auth_service.dart`)
 - Autenticação real via **Firebase Auth** (email/senha). O perfil (`operador`/`supervisor`/`admin`) e
   demais dados ficam no Firestore (`usuarios`) e em cache local (SQLite).
+- O cadastro administrativo usa a callable `cadastrarUsuario`: a Cloud Function valida o chamador,
+  cria a conta via Admin SDK e grava o perfil no Firestore sem substituir a sessão do supervisor.
+  A senha não é persistida no SQLite nem no documento do usuário; somente administradores podem
+  criar outro usuário com perfil `admin`.
 - `loginLocal` tenta login online primeiro; só recorre à sessão do Firebase Auth em cache
   (`_auth.currentUser`) quando o erro é especificamente de rede (`network-request-failed`/`timeout`) —
   uma rejeição real de credencial (senha errada, conta desabilitada) nunca usa esse fallback.
@@ -72,29 +76,60 @@ graph TD
 3. Para cada ferramenta exigida: escaneia QR ou digita a TAG (`_processarValidacaoFerramenta` →
    `InstrumentoService.buscarPorTag`). A TAG deve começar com o prefixo esperado (`_prefixosPorTipo`).
    - Se a calibração estiver **válida**: segue.
-   - Se estiver **vencida**: abre diálogo de liberação por supervisor (`_solicitarLiberacaoSupervisor`)
-     — **ver ponto de atenção 5.1 (a senha digitada ainda não é validada contra o Firebase Auth)**.
+   - Se estiver **vencida**: solicita liberação por supervisor via TOTP online (`validarCodigoLiberacao`)
+     ou via autorização offline assinada (`validarAutorizacaoOffline`) quando houver um `projetoId`.
+     No modo offline, o técnico gera uma solicitação contextual; o supervisor assina com Ed25519 no
+     próprio dispositivo e o técnico verifica a assinatura com a chave pública previamente sincronizada.
 4. Opcionalmente captura leituras de displays via OCR (`captura_ocr_page.dart`, ML Kit).
-5. `_criarProjetoFinal` (protegido contra duplo toque via `_salvandoProjeto`) grava o projeto em
-   `projetos` (Firestore + SQLite), gera o relatório Word via `RelatorioService.gerarRelatorioProjeto`
-   e avisa o usuário se o Word não pôde ser gerado ou se alguma leitura ficou de fora do template.
-   Também dispara `sincronizarProjetosPendentes()` em segundo plano para reenviar projetos presos
-   offline de sessões anteriores.
+5. `_criarProjetoFinal` (protegido contra duplo toque via `_salvandoProjeto`) grava o projeto como
+   `rascunho` em `projetos` (Firestore + SQLite) e o envia para revisão. A emissão do Word ocorre
+   somente depois da aprovação irreversível pelo supervisor/admin.
 
 ### 4.4 Geração de Relatório (`relatorio_service.dart`)
-- Abre o `.docx` template (ZIP+XML) de `assets/templates/`, faz `String.replaceAll` de placeholders
-  (`{PROJETO}`, `{EMPRESA}`, `{TAG_...}`, `{VALOR_N}`, etc.) diretamente no XML e regrava o ZIP.
-  **Não usa a dependência `docx_template` do pubspec** — é feito manualmente.
-  Todos os valores interpolados passam por `_escaparXml` (`&`/`<`/`>`/`"`/`'`) antes de entrar no XML,
-  evitando `.docx` corrompido quando um nome/tag contém esses caracteres.
-- Suporta até `RelatorioService.maxSlotsLeituraTemplate` (10) leituras OCR por relatório; o operador é
-  avisado se o projeto tiver mais leituras do que isso.
+- A aprovação chama `gerarRelatorioDocx` para os tipos Fluxo Laminar e Pesagem, enviando somente o
+  ID do projeto e o template esperado. A Function relê o projeto aprovado no Firestore, valida
+  domínio/status/conclusão e ignora qualquer dado estruturado enviado pelo cliente antes de usar os
+  modelos em `functions/templates/`.
+- Para os demais tipos, a aprovação chama `gerarRelatorioSistema` com apenas o ID do projeto.
+  A Function verifica o domínio, o status aprovado e a conclusão auditada; depois reconstrói os
+  blocos em `functions/relatorio_documento.js` a partir do Firestore antes de renderizar. A prévia
+  continua usando o construtor Flutter, e a regeneração usa os dados aprovados sem nova aprovação.
+- As funções salvam o arquivo no Storage e devolvem uma URL com token de download; senhas e dados de
+  autenticação nunca entram no documento.
 
-### 4.5 Sincronização offline → nuvem
-- `DatabaseHelper.sincronizarProjetosPendentes()` roda no `main()` (cold start) **e** é disparada
-  novamente (fire-and-forget) ao final de cada `_criarProjetoFinal` bem-sucedido, para reenviar
-  projetos que ficaram pendentes de sessões anteriores assim que há uma conexão ativa. Ainda não existe
-  um listener de conectividade nem um botão manual de "sincronizar agora" — ver ponto de atenção 5.2.
+### 4.5 Envio por e-mail (`enviarRelatorioEmail`)
+- Depois de gerar o DOCX, o app chama a callable com apenas `projetoId`. O backend reconstrói o mesmo
+  anexo a partir do Firestore, valida o domínio do solicitante e envia ao e-mail do usuário autenticado.
+- O diálogo de ações também permite enviar ou reenviar o relatório depois da aprovação, caso o SMTP
+  ainda estivesse indisponível no primeiro envio.
+- O transporte atual é SMTP Gmail (`smtp.gmail.com:465`, remetente padrão
+  `djmikenapoleao@gmail.com`) usando Nodemailer. A app password fica exclusivamente no Secret Manager,
+  no segredo `SMTP_APP_PASSWORD`.
+- Cada tentativa gera um documento em `relatorios_email` com estado `iniciando`, `enviado` ou `falhou`,
+  projeto, destinatário, usuário solicitante, template, caminho do Storage e mensagem do SMTP quando houver.
+- Configuração operacional, feita no terminal sem colocar o valor em arquivos:
+
+  ```text
+  firebase functions:secrets:set SMTP_APP_PASSWORD
+  firebase deploy --only functions:enviarRelatorioEmail
+  ```
+
+  O primeiro comando deve receber uma app password do Gmail com autenticação em dois fatores habilitada.
+  O valor não deve ser salvo no repositório, em `CREDENCIAIS_TESTE.md` ou no código.
+
+### 4.6 Sincronização offline → nuvem
+- `DatabaseHelper.sincronizarProjetosPendentes()` roda no `main()` (cold start), é disparada novamente
+  (fire-and-forget) ao final de cada `_criarProjetoFinal` bem-sucedido e também pode ser acionada pelo
+  botão manual de sincronização na `HomePage`. O listener de `connectivity_plus` repete a tentativa
+  automaticamente quando a conexão volta, com lock contra execuções concorrentes.
+- Após o login, `OfflineAuthorizationService.sincronizarChavesOnline()` atualiza o cache local das
+  chaves públicas dos supervisores do mesmo domínio. Antes de marcar um projeto como sincronizado,
+  tokens `offline_assinada` encontrados no histórico passam por `validarAutorizacaoOffline`.
+- A callable verifica Ed25519, validade, domínio e nonce em transação Firestore, registra a auditoria
+  em `liberacoes` e impede a reutilização server-side em `autorizacao_offline_nonces`. A assinatura
+  local continua sendo a decisão offline; a reconciliação posterior é a confirmação definitiva no servidor.
+  Para permitir sincronização tardia, o backend aceita a reconciliação por até 30 dias após a expiração
+  do pedido, sem ampliar o prazo de uso offline no dispositivo.
 
 ## 5. Pontos de atenção
 
@@ -103,22 +138,11 @@ graph TD
 > Os itens abaixo são de uma revisão funcional mais profunda feita em 2026-08-14.
 
 ### Ainda em aberto
-1. **Liberação de supervisor não verifica senha** ([novo_projeto_page.dart](lib/novo_projeto_page.dart)
-   `_solicitarLiberacaoSupervisor`): o campo de senha é lido mas nunca validado contra o Firebase Auth —
-   apenas o e-mail é checado (`perfil == supervisor|admin`). Qualquer pessoa que souber o e-mail de um
-   supervisor pode liberar o uso de um instrumento vencido. Requer decisão de produto sobre como
-   reautenticar um segundo usuário no mesmo dispositivo sem derrubar a sessão do operador logado (ex:
-   uma instância secundária do Firebase App só para essa verificação).
-2. **Sincronização ainda não tem listener de conectividade nem botão manual** — apenas roda no cold
-   start e ao final de cada criação de projeto bem-sucedida (ver 4.5). Um projeto criado offline e sem
-   nenhuma criação de projeto subsequente só sincroniza no próximo restart do app.
-3. Importação de planilha (`gestao_ferramentas_page.dart`) sem limite de linhas/tamanho de arquivo e
-   sem uso de `WriteBatch` (grava uma linha por vez).
-4. `qr_code_scanner_page.dart`/`captura_ocr_page.dart` não tratam `didChangeAppLifecycleState` —
-   risco de câmera travar ao voltar de segundo plano.
-5. Falhas de migração do SQLite (`_onUpgrade`) são apenas logadas, nunca surfaced ao usuário.
-6. `validadeEhValida` compara com `DateTime.now()` local do aparelho — se o fuso horário do celular do
-   técnico estiver errado, a validade pode virar horas antes/depois do esperado no último dia do mês.
+1. **Liberação TOTP exige internet** — o código é validado pela callable `validarCodigoLiberacao`,
+  com janela RFC 6238, limite de tentativas, bloqueio de reutilização e auditoria de projeto,
+  contexto e justificativa. Para o modo offline, a chave privada do supervisor nunca é distribuída:
+  o dispositivo do técnico mantém apenas chaves públicas, e a configuração inicial/reconciliação
+  exigem conexão.
 
 ### Corrigidos em 2026-08-14
 - Corrupção do Word por caracteres especiais não escapados no XML — corrigido com `_escaparXml`.
@@ -129,20 +153,42 @@ graph TD
   usa o cache para erros de rede (`network-request-failed`/`timeout`).
 - Leituras OCR além do 10º slot eram descartadas sem aviso — agora há um snackbar informativo.
 - Ferramentas/leituras validadas não eram limpas ao trocar de empresa no meio do fluxo — agora são.
+- Liberação excepcional não tinha autenticação forte — agora usa TOTP online configurado e confirmado
+  por callable, com auditoria e política de tentativas no backend.
+- Autorização excepcional offline não tinha alternativa segura — agora usa solicitação contextual,
+  assinatura Ed25519 protegida por PIN no armazenamento seguro do supervisor, verificação offline,
+  anti-replay local e reconciliação server-side.
+- Sincronização de projetos offline agora pode ser acionada manualmente e é repetida automaticamente
+  quando a conectividade retorna, sem execuções concorrentes.
+- As telas de OCR, QR/Webcam e foto de evidência observam o ciclo de vida do app, liberando a câmera
+  ao pausar e reinicializando-a ao retornar.
+- `InstrumentoModel.validadeEhValida` compara ano/mês como calendário, mantendo a validade do mês
+  corrente independente de horas, minutos e milissegundos do aparelho.
+- A importação de ferramentas rejeita arquivos acima de 10 MB ou 5.000 registros antes de gravar
+  alterações, grava o cache local em uma transação SQLite e envia a nuvem em lotes Firestore de até
+  500 operações.
+- A abertura do SQLite valida tabelas e colunas obrigatórias depois de criar ou migrar o banco; uma
+  inconsistência deixa de ser aceita silenciosamente e interrompe a abertura com diagnóstico explícito.
+- Quando o banco local está inconsistente, o app oferece reconstrução confirmada do cache, sem apagar
+  os dados já sincronizados no Firestore.
 
 ## 6. Coleções do Firestore
 
 | Coleção | Doc ID | Campos | Model |
 |---|---|---|---|
-| `usuarios` | `uid` do Firebase Auth | `nome`, `cpf`, `email`, `perfil`, `dominioEmpresa` | [usuario_model.dart](lib/usuario_model.dart) |
+| `usuarios` | `uid` do Firebase Auth | `nome`, `cpf`, `email`, `perfil`, `dominio_empresa` | [usuario_model.dart](lib/usuario_model.dart) |
 | `empresas` | `dominio` (parte do e-mail após `@`) | `cnpj`, `razao_social`, `nome_fantasia`, `dominio`, `projetosModelo`, `projetosFinais` | [empresa_model.dart](lib/empresa_model.dart) |
 | `instrumentos` | `tag` (maiúscula) | `tipo`, `tag`, `numeroSerie`, `numeroCertificado`, `validade` (`"MM/AAAA"`), `estaValido` (0/1), `dominio_empresa` | [instrumento_model.dart](lib/instrumento_model.dart) |
 | `projetos` | `PRJ-<timestamp ms>` | `id`, `cnpjEmpresa`, `tipoProjeto`, `ferramentasRequeridas`, `ferramentasEscaneadas`, `leiturasOcr`, `dataCriacao`, `operadorResponsavel` | [projeto_model.dart](lib/projeto_model.dart) |
+| `autorizacao_chaves_offline` | `uid` do supervisor | chave pública Ed25519, domínio, estado ativo e timestamps; escrita somente por callable | `functions/index.js` |
+| `autorizacao_offline_nonces` | nonce da solicitação | registro server-only de replay/reconciliação | `functions/index.js` |
+| `liberacoes` | automático | auditoria de TOTP ou autorização offline reconciliada | `functions/index.js` |
+| `relatorios_email` | automático | `projetoId`, `destinatario`, `remetente`, `templateId`, `status`, `solicitadoPor`, `caminho`, `messageId`, `dataHora` | `functions/index.js` |
 
 Nomes de coleções centralizados em [firestore_colecoes.dart](lib/firestore_colecoes.dart) — sempre
 usar essa classe em vez de strings soltas.
 
-## 7. Banco local (SQLite, `celacanto_local_database.db`, versão 4)
+## 7. Banco local (SQLite, `celacanto_local_database.db`, versão 9)
 
 - `usuarios(id PK, nome, cpf, email UNIQUE, senha [sempre NULL desde v4], perfil, dominio_empresa)`
 - `empresas(cnpj PK, razaoSocial, nomeFantasia, dominio_empresa)`
@@ -160,9 +206,13 @@ item sobre o fallback offline).
 - **Google ML Kit Text Recognition** — OCR de displays de instrumentos (`captura_ocr_page.dart`).
 - **camera** — captura de foto para OCR (usado inclusive no Windows).
 - **mobile_scanner** — leitura de QR Code das TAGs (`qr_code_scanner_page.dart`).
-- **archive + xml** (manual) — geração do relatório Word (ZIP+XML), *não* usa a dependência
-  `docx_template` apesar de estar no `pubspec.yaml`.
+- **docx + docxtemplater + pizzip** — renderização do relatório Word no backend; Fluxo Laminar e
+  Pesagem usam templates do cliente e os demais tipos usam o renderer estruturado do app.
+- **nodemailer + SMTP Gmail** — envio server-side do DOCX aprovado; a app password é lida do
+  Secret Manager pela callable `enviarRelatorioEmail`.
 - **sqflite / sqflite_common_ffi** — cache local (FFI usado em Windows/Linux/macOS).
+- **cryptography / flutter_secure_storage** — Ed25519, PBKDF2-HMAC-SHA256, AES-GCM e armazenamento
+  protegido da chave privada usada na autorização offline.
 - **excel / csv / file_picker / share_plus** — exportação/importação em massa de ferramentas.
 
 ## 9. Histórico de manutenção relevante
@@ -170,9 +220,8 @@ item sobre o fallback offline).
 - 2026-08-14: revisão de 7 tópicos de estilo/lint (lógica duplicada, senhas em texto puro, código
   morto, tratamento de erro silencioso, `BuildContext` após `await`, strings mágicas, duplicação do
   `EmpresaModel`) — todos corrigidos, `flutter analyze` limpo.
-- 2026-08-14: revisão funcional mais profunda e correção de 6 problemas reais (ver seção 5) — XML sem
-  escaping no relatório Word, falha silenciosa na geração do Word, duplo envio de projeto, fallback de
-  login offline incorreto, leituras OCR descartadas sem aviso, estado não limpo ao trocar de empresa.
-  Item pendente: verificação real de senha na liberação por supervisor (requer decisão de produto).
+- 2026-08-14: revisão funcional mais profunda e correção de problemas reais (ver seção 5) — falha
+  silenciosa na geração do Word, duplo envio de projeto, fallback de login offline incorreto,
+  leituras OCR descartadas sem aviso e estado não limpo ao trocar de empresa.
 - 2026-08-13/14: importação em massa de ~412 ferramentas do arquivo `SIVS_PADROES_*.xlsx` para a
   coleção `instrumentos` via `scripts/import_ferramentas/import.js`.

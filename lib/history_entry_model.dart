@@ -7,6 +7,7 @@ class HistoryEntry {
   final String campo;
   final String valorAntigo;
   final String valorNovo;
+  final Map<String, dynamic> detalhes;
 
   HistoryEntry({
     required this.usuario,
@@ -14,6 +15,7 @@ class HistoryEntry {
     required this.campo,
     required this.valorAntigo,
     required this.valorNovo,
+    this.detalhes = const {},
   });
 
   Map<String, dynamic> toMap() {
@@ -23,6 +25,7 @@ class HistoryEntry {
       'campo': campo,
       'valorAntigo': valorAntigo,
       'valorNovo': valorNovo,
+      if (detalhes.isNotEmpty) 'detalhes': detalhes,
     };
   }
 
@@ -33,6 +36,7 @@ class HistoryEntry {
       campo: data['campo']?.toString() ?? '',
       valorAntigo: data['valorAntigo']?.toString() ?? '',
       valorNovo: data['valorNovo']?.toString() ?? '',
+      detalhes: data['detalhes'] is Map ? Map<String, dynamic>.from(data['detalhes'] as Map) : const {},
     );
   }
 }

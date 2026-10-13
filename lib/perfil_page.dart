@@ -1,6 +1,12 @@
 // lib/perfil_page.dart
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:qr_flutter/qr_flutter.dart';
 import 'auth_service.dart';
+import 'cloud_functions_client.dart';
+import 'offline_authorization_service.dart';
 
 class PerfilPage extends StatefulWidget {
   final PerfilUsuario perfilLogado;
@@ -19,6 +25,7 @@ class PerfilPage extends StatefulWidget {
 class _PerfilPageState extends State<PerfilPage> {
   final _formKey = GlobalKey<FormState>();
   final _authService = AuthService();
+  final _offlineAuthorizationService = OfflineAuthorizationService.instance;
 
   final _senhaAtualController = TextEditingController();
   final _novaSenhaController = TextEditingController();
@@ -31,6 +38,11 @@ class _PerfilPageState extends State<PerfilPage> {
 
   Map<String, dynamic>? _dadosUsuario;
   bool _carregandoDados = true;
+  bool _autenticadorAtivo = false;
+  bool _autorizacaoOfflineConfigurada = false;
+
+  bool get _podeLiberar =>
+      widget.perfilLogado == PerfilUsuario.supervisor || widget.perfilLogado == PerfilUsuario.admin;
 
   @override
   void initState() {
@@ -52,8 +64,338 @@ class _PerfilPageState extends State<PerfilPage> {
     if (!mounted) return;
     setState(() {
       _dadosUsuario = dados;
+      _autenticadorAtivo = dados?['totpAtivo'] == true;
       _carregandoDados = false;
     });
+
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid != null) {
+      final chave = await _offlineAuthorizationService.publicKeyLocal(uid);
+      if (!mounted) return;
+      setState(() => _autorizacaoOfflineConfigurada = chave != null);
+    }
+  }
+
+  Future<void> _configurarAutenticador() async {
+    final Map<String, dynamic> config;
+    try {
+      config = await chamarCallable('configurarAutenticador', {});
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível iniciar a configuração: $e'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+    if (!mounted) return;
+
+    final uri = config['uri']?.toString() ?? '';
+    final segredo = config['segredo']?.toString() ?? '';
+    final codigoController = TextEditingController();
+    String? erro;
+    bool confirmando = false;
+
+    final confirmado = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Configurar autenticador'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('1. No Google Authenticator, toque em "+" e leia o QR code abaixo.'),
+                const SizedBox(height: 12),
+                SizedBox(width: 200, height: 200, child: QrImageView(data: uri, backgroundColor: Colors.white)),
+                const SizedBox(height: 8),
+                const Text('Ou digite a chave manualmente:', style: TextStyle(fontSize: 12)),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(child: SelectableText(segredo, style: const TextStyle(fontFamily: 'monospace'))),
+                    IconButton(
+                      icon: const Icon(Icons.copy, size: 18),
+                      onPressed: () => Clipboard.setData(ClipboardData(text: segredo)),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                const Text('2. Digite o código de 6 dígitos exibido no app para confirmar.'),
+                TextField(
+                  controller: codigoController,
+                  keyboardType: TextInputType.number,
+                  maxLength: 6,
+                  textAlign: TextAlign.center,
+                  decoration: InputDecoration(counterText: '', errorText: erro),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(ctx).pop(false), child: const Text('Cancelar')),
+            ElevatedButton(
+              onPressed: confirmando
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        confirmando = true;
+                        erro = null;
+                      });
+                      try {
+                        await chamarCallable('confirmarAutenticador', {'codigo': codigoController.text.trim()});
+                        if (ctx.mounted) Navigator.of(ctx).pop(true);
+                      } on FirebaseFunctionsException catch (e) {
+                        setDialogState(() {
+                          confirmando = false;
+                          erro = e.code == 'invalid-argument' ? 'Código incorreto' : (e.message ?? e.code);
+                        });
+                      } catch (e) {
+                        setDialogState(() {
+                          confirmando = false;
+                          erro = 'Falha de conexão';
+                        });
+                      }
+                    },
+              child: const Text('Confirmar'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmado == true && mounted) {
+      setState(() => _autenticadorAtivo = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Autenticador configurado!'), backgroundColor: Colors.green),
+      );
+    }
+  }
+
+  Widget _buildSecaoAutenticador() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: ListTile(
+        leading: Icon(Icons.verified_user_outlined, color: _autenticadorAtivo ? Colors.green : Colors.grey),
+        title: const Text('Autenticador de liberação'),
+        subtitle: Text(_autenticadorAtivo
+            ? 'Ativo. Envie ao técnico o código do Google Authenticator para liberar ações.'
+            : 'Não configurado. Configure para liberar técnicos por código.'),
+        trailing: TextButton(
+          onPressed: _configurarAutenticador,
+          child: Text(_autenticadorAtivo ? 'Reconfigurar' : 'Configurar'),
+        ),
+      ),
+    );
+  }
+
+  Future<String?> _solicitarPinOffline({required bool confirmar}) async {
+    final pinController = TextEditingController();
+    final confirmacaoController = TextEditingController();
+    String? erro;
+    final resultado = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: Text(confirmar ? 'Configurar autorização offline' : 'Autorizar solicitação offline'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: pinController,
+                obscureText: true,
+                keyboardType: TextInputType.visiblePassword,
+                decoration: const InputDecoration(labelText: 'PIN do supervisor'),
+              ),
+              if (confirmar) ...[
+                const SizedBox(height: 12),
+                TextField(
+                  controller: confirmacaoController,
+                  obscureText: true,
+                  keyboardType: TextInputType.visiblePassword,
+                  decoration: const InputDecoration(labelText: 'Confirmar PIN'),
+                ),
+              ],
+              if (erro != null) ...[
+                const SizedBox(height: 12),
+                Text(erro!, style: const TextStyle(color: Colors.red)),
+              ],
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(), child: const Text('Cancelar')),
+            FilledButton(
+              onPressed: () {
+                final pin = pinController.text;
+                if (pin.length < 6 || pin.length > 32) {
+                  setDialogState(() => erro = 'Use um PIN entre 6 e 32 caracteres.');
+                  return;
+                }
+                if (confirmar && pin != confirmacaoController.text) {
+                  setDialogState(() => erro = 'Os PINs não coincidem.');
+                  return;
+                }
+                Navigator.of(dialogContext).pop(pin);
+              },
+              child: const Text('Continuar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    pinController.dispose();
+    confirmacaoController.dispose();
+    return resultado;
+  }
+
+  Future<void> _configurarAutorizacaoOffline() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final pin = await _solicitarPinOffline(confirmar: true);
+    if (pin == null || !mounted) return;
+
+    try {
+      final publicKey = await _offlineAuthorizationService.criarChaveSupervisor(
+        supervisorUid: uid,
+        pin: pin,
+      );
+      await chamarCallable('registrarChaveAutorizacaoOffline', {'publicKey': publicKey});
+      if (!mounted) return;
+      setState(() => _autorizacaoOfflineConfigurada = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Autorização offline configurada.'), backgroundColor: Colors.green),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Não foi possível configurar a autorização offline: $e'), backgroundColor: Colors.red),
+      );
+    }
+  }
+
+  Future<void> _assinarSolicitacaoOffline() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+    final pin = await _solicitarPinOffline(confirmar: false);
+    if (pin == null || !mounted) return;
+
+    final solicitacaoController = TextEditingController();
+    String? resposta;
+    String? erro;
+    bool processando = false;
+    await showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Assinar solicitação offline'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Text('Cole abaixo a solicitação recebida do técnico.'),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: solicitacaoController,
+                  minLines: 3,
+                  maxLines: 6,
+                  decoration: const InputDecoration(labelText: 'Solicitação', border: OutlineInputBorder()),
+                ),
+                if (resposta != null) ...[
+                  const SizedBox(height: 16),
+                  const Text('Envie este token assinado ao técnico:'),
+                  const SizedBox(height: 8),
+                  SelectableText(resposta!, style: const TextStyle(fontSize: 11, fontFamily: 'monospace')),
+                  IconButton(
+                    tooltip: 'Copiar autorização',
+                    icon: const Icon(Icons.copy),
+                    onPressed: () => Clipboard.setData(ClipboardData(text: resposta!)),
+                  ),
+                ],
+                if (erro != null) ...[
+                  const SizedBox(height: 12),
+                  Text(erro!, style: const TextStyle(color: Colors.red)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: processando ? null : () => Navigator.of(dialogContext).pop(),
+              child: const Text('Fechar'),
+            ),
+            FilledButton(
+              onPressed: processando
+                  ? null
+                  : () async {
+                      setDialogState(() {
+                        processando = true;
+                        erro = null;
+                      });
+                      try {
+                        final token = await _offlineAuthorizationService.assinarSolicitacao(
+                          supervisorUid: uid,
+                          supervisorNome: _dadosUsuario?['nome']?.toString() ?? '',
+                          supervisorEmail: widget.emailLogado,
+                          pin: pin,
+                          requestToken: solicitacaoController.text.trim(),
+                        );
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          resposta = token;
+                          processando = false;
+                        });
+                      } catch (e) {
+                        if (!dialogContext.mounted) return;
+                        setDialogState(() {
+                          erro = 'Solicitação inválida ou expirada.';
+                          processando = false;
+                        });
+                      }
+                    },
+              child: Text(processando ? 'Assinando...' : 'Assinar'),
+            ),
+          ],
+        ),
+      ),
+    );
+    solicitacaoController.dispose();
+  }
+
+  Widget _buildSecaoAutorizacaoOffline() {
+    return Card(
+      elevation: 2,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: Padding(
+        padding: const EdgeInsets.all(8),
+        child: Column(
+          children: [
+            ListTile(
+              leading: Icon(Icons.key_outlined, color: _autorizacaoOfflineConfigurada ? Colors.green : Colors.grey),
+              title: const Text('Autorização offline assinada'),
+              subtitle: Text(_autorizacaoOfflineConfigurada
+                  ? 'Chave configurada neste dispositivo.'
+                  : 'Configure uma chave para autorizar solicitações sem internet.'),
+              trailing: TextButton(
+                onPressed: _configurarAutorizacaoOffline,
+                child: Text(_autorizacaoOfflineConfigurada ? 'Reconfigurar' : 'Configurar'),
+              ),
+            ),
+            if (_autorizacaoOfflineConfigurada)
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: _assinarSolicitacaoOffline,
+                  icon: const Icon(Icons.draw_outlined),
+                  label: const Text('Assinar solicitação'),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
   }
 
   void _executarAlteracaoSenha() async {
@@ -137,6 +479,13 @@ class _PerfilPageState extends State<PerfilPage> {
                         ),
                       ),
                       const SizedBox(height: 32),
+
+                      if (_podeLiberar) ...[
+                        _buildSecaoAutenticador(),
+                        const SizedBox(height: 16),
+                        _buildSecaoAutorizacaoOffline(),
+                        const SizedBox(height: 32),
+                      ],
 
                       // --- FORMULÁRIO DE ALTERAÇÃO DE SENHA ---
                       const Text(

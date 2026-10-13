@@ -27,6 +27,9 @@ class GestaoFerramentasPage extends StatefulWidget {
 }
 
 class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
+  static const int _maxBytesImportacao = 10 * 1024 * 1024;
+  static const int _maxLinhasImportacao = 5000;
+
   final DatabaseHelper _dbHelper = DatabaseHelper();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final AuthService _authService = AuthService();
@@ -206,6 +209,26 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
         .toList();
   }
 
+  Future<void> _enviarImportacaoParaNuvem(List<Map<String, dynamic>> operacoes) async {
+    final colecao = _firestore.collection(FirestoreColecoes.instrumentos);
+    for (var inicio = 0; inicio < operacoes.length; inicio += 500) {
+      final fim = (inicio + 500 < operacoes.length) ? inicio + 500 : operacoes.length;
+      final lote = _firestore.batch();
+      for (var indice = inicio; indice < fim; indice++) {
+        final operacao = operacoes[indice];
+        final tag = operacao['tag'] as String;
+        final dados = operacao['dados'] as Map<String, dynamic>;
+        final referencia = colecao.doc(tag);
+        if (operacao['mesclar'] == true) {
+          lote.set(referencia, dados, SetOptions(merge: true));
+        } else {
+          lote.set(referencia, dados);
+        }
+      }
+      await lote.commit();
+    }
+  }
+
   /// Importa uma planilha .xlsx/.csv exportada (e editada) pelo usuário, atualizando/criando ativos por TAG
   Future<void> _importarPlanilha() async {
     final resultado = await FilePicker.platform.pickFiles(
@@ -214,11 +237,20 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
       withData: true,
     );
     final arquivo = resultado?.files.single;
-    if (arquivo?.bytes == null) return;
+    if (arquivo == null) return;
+    final bytes = arquivo.bytes;
+    if (bytes == null) return;
+    if (arquivo.size > _maxBytesImportacao || bytes.length > _maxBytesImportacao) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A planilha excede o limite de 10 MB.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
 
     List<List<String>> linhas;
     try {
-      linhas = _lerLinhasDaPlanilha(arquivo!.name, arquivo.bytes!);
+      linhas = _lerLinhasDaPlanilha(arquivo.name, bytes);
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -227,6 +259,13 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
       return;
     }
     if (linhas.isEmpty) return;
+    if (linhas.length - 1 > _maxLinhasImportacao) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('A planilha excede o limite de 5.000 registros.'), backgroundColor: Colors.red),
+      );
+      return;
+    }
 
     final cabecalho = linhas.first.map(_normalizarCabecalho).toList();
     final idxTag = cabecalho.indexOf('tag');
@@ -247,6 +286,9 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
 
     final dominio = _authService.extrairDominio(widget.emailLogado);
     int criados = 0, atualizados = 0, ignorados = 0;
+  final instrumentosNovos = <Map<String, dynamic>>[];
+  final atualizacoesLocais = <Map<String, dynamic>>[];
+  final operacoesNuvem = <Map<String, dynamic>>[];
 
     for (var i = 1; i < linhas.length; i++) {
       final linha = linhas[i];
@@ -274,12 +316,9 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
           estaValido: InstrumentoModel.validadeEhValida(validade),
           dominioEmpresa: dominio,
         );
-        await _dbHelper.insertInstrumento(novo.toMap());
-        try {
-          await _firestore.collection(FirestoreColecoes.instrumentos).doc(tag).set(novo.toMap());
-        } catch (e) {
-          debugPrint('Novo ativo $tag salvo offline: $e');
-        }
+        final dadosNovos = novo.toMap();
+        instrumentosNovos.add(dadosNovos);
+        operacoesNuvem.add({'tag': tag, 'dados': dadosNovos, 'mesclar': false});
         criados++;
       } else {
         final camposAtualizados = <String, dynamic>{};
@@ -295,14 +334,26 @@ class _GestaoFerramentasPageState extends State<GestaoFerramentasPage> {
           continue;
         }
 
-        await _dbHelper.updateInstrumentoPorTag(tag, camposAtualizados);
-        try {
-          await _firestore.collection(FirestoreColecoes.instrumentos).doc(tag).set(camposAtualizados, SetOptions(merge: true));
-        } catch (e) {
-          debugPrint('Atualização de $tag salva offline: $e');
-        }
+        atualizacoesLocais.add({'tag': tag, 'dados': camposAtualizados});
+        operacoesNuvem.add({'tag': tag, 'dados': camposAtualizados, 'mesclar': true});
         atualizados++;
       }
+    }
+
+    try {
+      await _dbHelper.aplicarImportacaoInstrumentos(instrumentosNovos, atualizacoesLocais);
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Erro ao salvar a importação local: $e'), backgroundColor: Colors.red),
+      );
+      return;
+    }
+
+    try {
+      await _enviarImportacaoParaNuvem(operacoesNuvem);
+    } catch (e) {
+      debugPrint('Importação salva localmente; sincronização em lote pendente: $e');
     }
 
     if (!mounted) return;

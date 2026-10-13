@@ -41,11 +41,6 @@ class TesteCatalogoService {
     return locais;
   }
 
-  Future<TesteCatalogoModel?> buscarPorTipo(String dominio, String tipoEnsaio) async {
-    final mapa = await _dbHelper.getTesteCatalogo(dominio, tipoEnsaio);
-    return mapa == null ? null : TesteCatalogoModel.fromMap(mapa);
-  }
-
   Future<void> salvar(TesteCatalogoModel teste) async {
     final atualizado = teste.copyWith(atualizadoEm: DateTime.now());
     await _dbHelper.insertTesteCatalogo(atualizado.toMap());

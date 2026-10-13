@@ -6,12 +6,15 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'database_helper.dart';
 import 'empresa_service.dart';
+import 'execucao_projeto_service.dart';
 import 'firestore_colecoes.dart';
 import 'history_entry_model.dart';
 import 'instrumento_model.dart';
+import 'paralelismo_model.dart';
 import 'projeto_model.dart';
+import 'resultado_ensaio_model.dart';
 
-class ProjetoService {
+class ProjetoService implements ExecucaoProjetoService {
   final DatabaseHelper _dbHelper = DatabaseHelper();
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final EmpresaService _empresaService = EmpresaService();
@@ -81,6 +84,7 @@ class ProjetoService {
         'id': handlingUnit.id,
         'projetoId': projeto.id,
         'nome': handlingUnit.nome,
+        'numero': handlingUnit.numero,
         'temFiltroTerminal': handlingUnit.temFiltroTerminal ? 1 : 0,
         'qtdFiltrosTerminais': handlingUnit.qtdFiltrosTerminais,
       });
@@ -125,7 +129,8 @@ class ProjetoService {
 
   /// Envia os pontos de leitura locais do projeto para o doc do Firestore, para que o supervisor
   /// veja os resultados na aprovação mesmo em outro aparelho.
-  Future<void> sincronizarPontosLeitura(String projetoId) async {
+  @override
+  Future<void> sincronizarPontosLeitura(String projetoId, {bool exigirSincronizacao = false}) async {
     try {
       final pontos = await _dbHelper.getPontosLeituraPorProjeto(projetoId);
       await _firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(
@@ -134,11 +139,44 @@ class ProjetoService {
       );
     } catch (e) {
       debugPrint('ProjetoService: pontos de leitura salvos apenas localmente (offline?): $e');
+      if (exigirSincronizacao) rethrow;
     }
+  }
+
+  Future<void> adicionarHistorico(String projetoId, HistoryEntry entrada) async {
+    final projetosLocais = await _dbHelper.getProjetos();
+    final projetoAtual = projetosLocais.firstWhere(
+      (p) => p['id'].toString() == projetoId,
+      orElse: () => <String, dynamic>{},
+    );
+    final historicoBruto = projetoAtual['history']?.toString() ?? '';
+    final historicoAtual = historicoBruto.isEmpty
+        ? <Map<String, dynamic>>[]
+        : List<Map<String, dynamic>>.from(jsonDecode(historicoBruto));
+    historicoAtual.add(entrada.toMap());
+
+    var sincronizado = false;
+    try {
+      await _firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(
+        {'history': historicoAtual},
+        SetOptions(merge: true),
+      );
+      sincronizado = true;
+    } catch (e) {
+      debugPrint('ProjetoService: evento de auditoria salvo apenas localmente (offline?): $e');
+    }
+
+    await _dbHelper.atualizarStatusEHistoricoProjeto(
+      projetoId,
+      novoStatus: projetoAtual['status']?.toString() ?? StatusRelatorio.rascunho.name,
+      historicoCompleto: historicoAtual,
+      sincronizado: sincronizado,
+    );
   }
 
   /// Persiste apenas o vínculo de instrumentos escaneados em campo (sem regravar salas/handling
   /// units), usado quando o técnico associa ferramentas durante a execução de um ensaio.
+  @override
   Future<void> atualizarFerramentasEscaneadas(String projetoId, Map<String, List<InstrumentoModel>> ferramentas) async {
     final mapaSerializado = ferramentas.map((k, v) => MapEntry(k, v.map((i) => i.toMap()).toList()));
 
@@ -154,6 +192,32 @@ class ProjetoService {
     await _dbHelper.atualizarFerramentasEscaneadasProjeto(projetoId, mapaSerializado);
   }
 
+  Future<void> atualizarParalelismo(String projetoId, RegistroParalelismo registro) async {
+    try {
+      await _firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(
+        {'paralelismo': registro.toMap()},
+        SetOptions(merge: true),
+      );
+    } catch (e) {
+      debugPrint('ProjetoService: paralelismo salvo apenas localmente (offline?): $e');
+    }
+    await _dbHelper.atualizarParalelismoProjeto(projetoId, registro.toMap());
+  }
+
+  @override
+  Future<void> salvarResultadoEnsaio(ResultadoEnsaioModel resultado) async {
+    await _dbHelper.inserirResultadoEnsaio(resultado.toMap());
+    try {
+      final resultados = await _dbHelper.getResultadosEnsaioPorProjeto(resultado.projetoId);
+      await _firestore.collection(FirestoreColecoes.projetos).doc(resultado.projetoId).set(
+        {'resultadosEnsaios': resultados},
+        SetOptions(merge: true),
+      );
+    } catch (e) {
+      debugPrint('ProjetoService: resultado do ensaio salvo apenas localmente (offline?): $e');
+    }
+  }
+
   /// Avança o status do fluxo de aprovação (rascunho -> pronto_para_campo -> em_revisao ->
   /// aprovado) e acrescenta uma entrada no histórico de auditoria, preservando o histórico
   /// já existente tanto no Firestore quanto no cache local.
@@ -161,6 +225,7 @@ class ProjetoService {
     String projetoId, {
     required StatusRelatorio novoStatus,
     required HistoryEntry novaEntrada,
+    bool exigirSincronizacao = false,
   }) async {
     final projetosLocais = await _dbHelper.getProjetos();
     final projetoAtual = projetosLocais.firstWhere(
@@ -174,19 +239,23 @@ class ProjetoService {
         : List<Map<String, dynamic>>.from(jsonDecode(historicoBruto));
     historicoAtual.add(novaEntrada.toMap());
 
+    var sincronizado = false;
     try {
       await _firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(
         {'status': novoStatus.name, 'history': historicoAtual},
         SetOptions(merge: true),
       );
+      sincronizado = true;
     } catch (e) {
       debugPrint('ProjetoService: status/histórico salvos apenas localmente (offline?): $e');
+      if (exigirSincronizacao) rethrow;
     }
 
     await _dbHelper.atualizarStatusEHistoricoProjeto(
       projetoId,
       novoStatus: novoStatus.name,
       historicoCompleto: historicoAtual,
+      sincronizado: sincronizado,
     );
   }
 }

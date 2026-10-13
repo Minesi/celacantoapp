@@ -1,18 +1,16 @@
 // lib/relatorio_service.dart
-import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 import 'package:cloud_functions/cloud_functions.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show MethodChannel, PlatformException;
 import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
+import 'cloud_functions_client.dart';
 import 'projeto_model.dart';
 
 class RelatorioService {
   static const _canalRelatorios = MethodChannel('celacantoapp/relatorios');
-  final FirebaseFunctions _functions = FirebaseFunctions.instance;
 
   /// ID do template salvo no Storage em `templates/<templateId>.docx` (ver Cloud Function
   /// `gerarRelatorioDocx` em functions/index.js).
@@ -21,16 +19,10 @@ class RelatorioService {
 
     if (tipoNormalizado.contains('fluxo')) return 'fluxo_laminar';
     if (tipoNormalizado.contains('ar comprimido')) return 'modelo_ar_comprimido';
-    if (tipoNormalizado.contains('cabine')) return 'modelo_cabine_exaustao';
+    if (tipoNormalizado.contains('cabine') || tipoNormalizado.contains('capela')) return 'modelo_cabine_exaustao';
     if (tipoNormalizado.contains('hvac')) return 'modelo_relatorio_hvac';
+    if (tipoNormalizado.contains('pesagem')) return 'pesagem';
     return 'modelo_teste';
-  }
-
-  /// Mantido por compatibilidade com o fluxo legado (assets locais). A geração real do
-  /// .docx agora ocorre na nuvem (ver [gerarRelatorioProjeto]); este caminho só é usado
-  /// para registrar/derivar qual template foi originalmente selecionado.
-  String assetPathParaProjeto(String tipoProjeto) {
-    return 'assets/templates/${templateIdParaProjeto(tipoProjeto)}.docx';
   }
 
   /// Chama a Cloud Function `gerarRelatorioDocx`, que carrega o template do Storage,
@@ -40,14 +32,15 @@ class RelatorioService {
   /// devolve um aviso claro para tentar novamente mais tarde.
   Future<({File? arquivo, String? localizacao, List<String> avisos})> gerarRelatorioProjeto({
     required ProjetoModel projeto,
-    required String nomeEmpresa,
-    required String assetTemplatePath,
+    required String templateId,
   }) async {
     final avisos = <String>[];
-    final templateId = _templateIdDoAssetPath(assetTemplatePath);
 
     try {
-      final payload = _montarPayloadMerge(projeto: projeto, nomeEmpresa: nomeEmpresa, templateId: templateId);
+      final payload = {
+        'templateId': templateId,
+        'projeto': {'id': projeto.id},
+      };
       final dados = await _chamarGerarRelatorio(payload);
 
       final url = dados['url'] as String?;
@@ -72,77 +65,54 @@ class RelatorioService {
     }
   }
 
-  /// No Windows/Linux o plugin cloud_functions não tem implementação nativa: usa o protocolo
-  /// HTTPS de callable (POST {data} com ID token) direto na função.
-  Future<Map<String, dynamic>> _chamarGerarRelatorio(Map<String, dynamic> payload) async {
-    if (kIsWeb || !(Platform.isWindows || Platform.isLinux)) {
-      final resultado = await _functions.httpsCallable('gerarRelatorioDocx').call(payload);
-      return Map<String, dynamic>.from(resultado.data as Map);
-    }
+  Future<Map<String, dynamic>> _chamarGerarRelatorio(Map<String, dynamic> payload) =>
+      chamarCallable('gerarRelatorioDocx', payload, timeout: const Duration(seconds: 120));
 
-    final usuario = FirebaseAuth.instance.currentUser;
-    if (usuario == null) throw Exception('Usuário não autenticado.');
-    final token = await usuario.getIdToken();
-    final projectId = Firebase.app().options.projectId;
-
-    final client = HttpClient();
+  /// Emite o relatório montado pelo sistema (sem template): a Cloud Function `gerarRelatorioSistema`
+  /// reconstrói os blocos a partir do projeto aprovado, renderiza o .docx e salva o arquivo
+  /// em Downloads/Celacanto.
+  Future<({File? arquivo, String? localizacao, List<String> avisos})> emitirRelatorio({
+    required String projetoId,
+  }) async {
+    final avisos = <String>[];
     try {
-      final request = await client.postUrl(Uri.https('us-central1-$projectId.cloudfunctions.net', '/gerarRelatorioDocx'));
-      request.headers.contentType = ContentType.json;
-      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
-      request.write(jsonEncode({'data': payload}));
-      final response = await request.close().timeout(const Duration(seconds: 120));
-      final texto = await response.transform(utf8.decoder).join();
-      final Map<String, dynamic> corpo;
-      try {
-        corpo = jsonDecode(texto) as Map<String, dynamic>;
-      } on FormatException {
-        debugPrint('gerarRelatorioDocx respondeu HTTP ${response.statusCode} sem JSON: '
-            '${texto.length > 300 ? texto.substring(0, 300) : texto}');
-        throw FirebaseFunctionsException(code: 'http-${response.statusCode}', message: 'HTTP ${response.statusCode}');
-      }
-      if (response.statusCode != 200 || corpo['error'] != null) {
-        final erro = corpo['error'] as Map<String, dynamic>? ?? {};
-        throw FirebaseFunctionsException(
-          code: erro['status']?.toString().toLowerCase() ?? 'http-${response.statusCode}',
-          message: erro['message']?.toString() ?? 'HTTP ${response.statusCode}',
-        );
-      }
-      return Map<String, dynamic>.from(corpo['result'] as Map);
-    } finally {
-      client.close();
+      final dados = await chamarCallable(
+        'gerarRelatorioSistema',
+        {'projetoId': projetoId},
+        timeout: const Duration(seconds: 120),
+      );
+      final url = dados['url'] as String?;
+      if (url == null || url.isEmpty) throw Exception('A função de geração não retornou uma URL válida.');
+      final bytes = await _baixarBytes(url);
+      return await _salvarNoDispositivo('Relatorio_${projetoId.replaceAll(' ', '_')}.docx', bytes, avisos);
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('Falha ao emitir relatório: ${e.code} - ${e.message}');
+      avisos.add('Não foi possível gerar o relatório agora (${e.message ?? e.code}). Tente novamente quando estiver online.');
+      return (arquivo: null, localizacao: null, avisos: avisos);
+    } catch (e) {
+      debugPrint('Falha ao emitir relatório: $e');
+      avisos.add('Não foi possível gerar o relatório agora (sem conexão?). Tente novamente quando estiver online.');
+      return (arquivo: null, localizacao: null, avisos: avisos);
     }
   }
 
-  String _templateIdDoAssetPath(String assetPath) {
-    final nomeArquivo = assetPath.split('/').last;
-    return nomeArquivo.replaceAll('.docx', '');
-  }
-
-  /// Monta o payload enviado à Cloud Function: dados escalares do projeto + salas/handling
-  /// units estruturados + instrumentos escaneados + leituras (compat. com os templates atuais).
-  Map<String, dynamic> _montarPayloadMerge({
-    required ProjetoModel projeto,
-    required String nomeEmpresa,
-    required String templateId,
-  }) {
-    return {
-      'templateId': templateId,
-      'projeto': {
-        'id': projeto.id,
-        'tipoProjeto': projeto.tipoProjeto,
-        'cnpjEmpresa': projeto.cnpjEmpresa,
-        'nomeEmpresa': nomeEmpresa,
-        'sistemaNome': projeto.sistemaId,
-        'area': projeto.area,
-        'salas': projeto.salas.map((s) => s.toMap()).toList(),
-        'handlingUnits': projeto.handlingUnits.map((h) => h.toMap()).toList(),
-        'ferramentasEscaneadas': projeto.ferramentasEscaneadas.map(
-          (tipo, instrumentos) => MapEntry(tipo, instrumentos.map((i) => i.toMap()).toList()),
-        ),
-        'leiturasOcr': projeto.leiturasOcr.map((l) => l.toMap()).toList(),
-      },
-    };
+  Future<({bool enviado, String? aviso})> enviarRelatorioPorEmail({
+    required String projetoId,
+  }) async {
+    try {
+      final dados = await chamarCallable(
+        'enviarRelatorioEmail',
+        {'projetoId': projetoId},
+        timeout: const Duration(seconds: 180),
+      );
+      return (enviado: dados['ok'] == true, aviso: null);
+    } on FirebaseFunctionsException catch (e) {
+      debugPrint('Falha ao enviar relatório por e-mail: ${e.code} - ${e.message}');
+      return (enviado: false, aviso: e.message ?? e.code);
+    } catch (e) {
+      debugPrint('Falha ao enviar relatório por e-mail: $e');
+      return (enviado: false, aviso: e.toString());
+    }
   }
 
   Future<List<int>> _baixarBytes(String url) async {
@@ -180,6 +150,13 @@ class RelatorioService {
         }
         debugPrint('DEBUG SUCCESS: Documento salvo em Downloads: $uriDownloads');
         return (arquivo: arquivoTemporario, localizacao: uriDownloads, avisos: avisos);
+      }
+
+      if (Platform.isIOS) {
+        final diretorioDocumentos = await getApplicationDocumentsDirectory();
+        final arquivoLocal = File('${diretorioDocumentos.path}/$nomeArquivo');
+        await arquivoLocal.writeAsBytes(bytesFinais, flush: true);
+        return (arquivo: arquivoLocal, localizacao: arquivoLocal.path, avisos: avisos);
       }
 
       final diretorioDownloads = await getDownloadsDirectory();
@@ -220,5 +197,39 @@ class RelatorioService {
       debugPrint('Falha ao abrir relatório: $e');
     }
     return false;
+  }
+
+  Future<bool> compartilharRelatorio({
+    required File arquivo,
+    required String assunto,
+    required String texto,
+  }) async {
+    if (!(Platform.isAndroid || Platform.isIOS)) return false;
+    try {
+      await Share.shareXFiles([XFile(arquivo.path)], subject: assunto, text: texto);
+      return true;
+    } catch (e) {
+      debugPrint('Falha ao compartilhar relatório: $e');
+      return false;
+    }
+  }
+
+  Future<bool> abrirImpressaoWindows(String localizacao) async {
+    if (!Platform.isWindows) return false;
+    try {
+      final caminho = localizacao.replaceAll("'", "''");
+      final comando = "\$ErrorActionPreference = 'Stop'; "
+          "\$word = New-Object -ComObject Word.Application; "
+          "\$documento = \$word.Documents.Open('$caminho'); "
+          "\$word.Visible = \$true; "
+          "\$word.Dialogs.Item(88).Show(); "
+          "\$documento.Close([ref]\$false); "
+          "\$word.Quit();";
+      await Process.start('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', comando]);
+      return true;
+    } catch (e) {
+      debugPrint('Falha ao abrir impressão do relatório: $e');
+      return false;
+    }
   }
 }

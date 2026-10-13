@@ -4,6 +4,7 @@ import 'instrumento_model.dart';
 import 'sala_model.dart';
 import 'handling_unit_model.dart';
 import 'history_entry_model.dart';
+import 'paralelismo_model.dart';
 
 // Fluxo de aprovação do relatório: elaboração -> campo -> revisão -> aprovação
 // (a geração do .docx final é disparada na transição para `aprovado`).
@@ -30,6 +31,8 @@ class ProjetoModel {
   final List<String> ensaiosSelecionados; // Tipos de EnsaioModel escolhidos para o projeto
   final StatusRelatorio status;
   final List<HistoryEntry> history;
+  final RegistroParalelismo? paralelismo;
+  final int? validadeTestesMeses;
 
   // Construtor único e organizado
   ProjetoModel({
@@ -46,6 +49,8 @@ class ProjetoModel {
     this.ensaiosSelecionados = const [],
     this.status = StatusRelatorio.rascunho,
     this.history = const [],
+    this.paralelismo,
+    this.validadeTestesMeses,
   });
 
   Map<String, dynamic> toMap() {
@@ -63,6 +68,8 @@ class ProjetoModel {
       'ensaiosSelecionados': ensaiosSelecionados,
       'status': status.name,
       'history': history.map((h) => h.toMap()).toList(),
+      'paralelismo': paralelismo?.toMap(),
+      'validadeTestesMeses': validadeTestesMeses,
     };
   }
 
@@ -99,6 +106,12 @@ class ProjetoModel {
       history: ((data['history'] ?? const []) as List)
           .map((h) => HistoryEntry.fromMap(Map<String, dynamic>.from(h)))
           .toList(),
+      paralelismo: data['paralelismo'] is Map
+          ? RegistroParalelismo.fromMap(Map<String, dynamic>.from(data['paralelismo']))
+          : null,
+        validadeTestesMeses: data['validadeTestesMeses'] is num
+          ? (data['validadeTestesMeses'] as num).toInt()
+          : int.tryParse(data['validadeTestesMeses']?.toString() ?? ''),
     );
   }
 }
