@@ -19,8 +19,11 @@ void main() {
     final path = join(dbPath, 'celacanto_migration_test.db');
     await databaseFactory.deleteDatabase(path);
 
-    final legacyDb = await openDatabase(path, version: 1, onCreate: (db, version) async {
-      await db.execute('''
+    final legacyDb = await openDatabase(
+      path,
+      version: 1,
+      onCreate: (db, version) async {
+        await db.execute('''
         CREATE TABLE usuarios (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           nome TEXT,
@@ -30,7 +33,8 @@ void main() {
           perfil TEXT
         )
       ''');
-    });
+      },
+    );
     await legacyDb.close();
 
     final dbHelper = DatabaseHelper();
@@ -47,8 +51,14 @@ void main() {
     final service = RelatorioService();
 
     expect(service.templateIdParaProjeto('Fluxo Laminar'), 'fluxo_laminar');
-    expect(service.templateIdParaProjeto('Ar Comprimido'), 'modelo_ar_comprimido');
-    expect(service.templateIdParaProjeto('Cabine de Exaustão'), 'modelo_cabine_exaustao');
+    expect(
+      service.templateIdParaProjeto('Ar Comprimido'),
+      'modelo_ar_comprimido',
+    );
+    expect(
+      service.templateIdParaProjeto('Cabine de Exaustão'),
+      'modelo_cabine_exaustao',
+    );
     expect(service.templateIdParaProjeto('HVAC'), 'modelo_relatorio_hvac');
     expect(service.templateIdParaProjeto('Teste'), 'modelo_teste');
     expect(service.templateIdParaProjeto('Outro escopo'), 'modelo_teste');
@@ -60,19 +70,23 @@ void main() {
     expect(InstrumentoModel.validadeEhValida('01/1900'), isFalse);
   });
 
-  testWidgets('submits the login form when Enter is pressed on the password field', (
-    tester,
-  ) async {
-    await tester.pumpWidget(const MaterialApp(home: LoginPage()));
+  testWidgets(
+    'submits the login form when Enter is pressed on the password field',
+    (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: LoginPage()));
 
-    final campos = find.byType(TextFormField);
-    expect(campos, findsNWidgets(2));
+      final campos = find.byType(TextFormField);
+      expect(campos, findsNWidgets(2));
 
-    await tester.tap(campos.at(1));
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pump();
+      await tester.tap(campos.at(1));
+      await tester.testTextInput.receiveAction(TextInputAction.done);
+      await tester.pump();
 
-    expect(find.text('Por favor, insira seu e-mail ou usuário'), findsOneWidget);
-    expect(find.text('Por favor, insira sua senha'), findsOneWidget);
-  });
+      expect(
+        find.text('Por favor, insira seu e-mail ou usuário'),
+        findsOneWidget,
+      );
+      expect(find.text('Por favor, insira sua senha'), findsOneWidget);
+    },
+  );
 }

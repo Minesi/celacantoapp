@@ -417,7 +417,9 @@ void main() {
           .where('projetoId', isEqualTo: projetoId)
           .get(const GetOptions(source: Source.server));
       envio = envios.docs.where((d) => d.data()['status'] == 'enviado').firstOrNull;
-      if (envio == null) await Future<void>.delayed(const Duration(seconds: 2));
+        if (envio == null) {
+          await Future<void>.delayed(const Duration(seconds: 2));
+        }
     }
     expect(envio, isNotNull, reason: 'Nenhum registro "enviado" em relatorios_email para $projetoId');
     expect(envio!.data()['destinatario'], emailTeste.toLowerCase());

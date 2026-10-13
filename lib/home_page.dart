@@ -61,7 +61,7 @@ class HomePage extends StatelessWidget {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Image.asset('assets/images/logo.png', height: 40),
+                  Image.asset('assets/images/celacanto_logo.png', height: 40),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [

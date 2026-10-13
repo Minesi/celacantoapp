@@ -6,6 +6,7 @@ import 'database_helper.dart';
 import 'cloud_functions_client.dart';
 import 'firestore_colecoes.dart';
 import 'usuario_model.dart';
+import 'offline_authorization_service.dart';
 
 // redator = equipe de elaboração/estrutura prévia do relatório (antes de ir a campo)
 enum PerfilUsuario { admin, tecnico, supervisor, redator }
@@ -203,6 +204,45 @@ class AuthService {
       return false;
     }
   }
+
+  Future<bool> excluirMinhaConta({required String senhaAtual}) async {
+    final usuarioAtual = _auth.currentUser;
+    final emailUsuario = usuarioAtual?.email?.trim().toLowerCase();
+    if (usuarioAtual == null || emailUsuario == null || emailUsuario.isEmpty) return false;
+
+    try {
+      final credential = EmailAuthProvider.credential(email: emailUsuario, password: senhaAtual);
+      await usuarioAtual.reauthenticateWithCredential(credential);
+      await usuarioAtual.getIdToken(true);
+      await chamarCallable('excluirMinhaConta', {});
+    } catch (e) {
+      debugPrint('Falha ao excluir conta no servidor: $e');
+      return false;
+    }
+
+    try {
+      final dbHelper = DatabaseHelper();
+      final usuariosLocais = await dbHelper.getUsuarios();
+      for (final usuario in usuariosLocais) {
+        final emailLocal = (usuario['email'] ?? '').toString().trim().toLowerCase();
+        final idLocal = usuario['id'];
+        if (emailLocal == emailUsuario && idLocal is int) {
+          await dbHelper.deleteUsuario(idLocal);
+        }
+      }
+      await OfflineAuthorizationService.instance.removerDadosLocais(usuarioAtual.uid);
+    } catch (e) {
+      debugPrint('Conta excluída, mas não foi possível limpar todo o cache local: $e');
+    }
+
+    try {
+      await _auth.signOut();
+    } catch (e) {
+      debugPrint('Conta excluída, mas o logout local falhou: $e');
+    }
+    return true;
+  }
+
   /// 6. Envia um e-mail de recuperação/redefinição de senha do Firebase Auth
   Future<bool> enviarEmailRecuperacao(String email) async {
     try {

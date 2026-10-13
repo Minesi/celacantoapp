@@ -24,11 +24,17 @@ class ProjetoService implements ExecucaoProjetoService {
   Future<List<Map<String, dynamic>>> listarPorDominio(String dominio) async {
     try {
       final empresas = await _empresaService.listarPorDominio(dominio);
-      final cnpjs = empresas.map((e) => e['cnpj']?.toString() ?? '').where((c) => c.isNotEmpty).toList();
+      final cnpjs = empresas
+          .map((e) => e['cnpj']?.toString() ?? '')
+          .where((c) => c.isNotEmpty)
+          .toList();
 
       // Firestore 'whereIn' aceita no máximo 30 valores; suficiente para o volume atual de clientes.
       for (var i = 0; i < cnpjs.length; i += 30) {
-        final lote = cnpjs.sublist(i, i + 30 > cnpjs.length ? cnpjs.length : i + 30);
+        final lote = cnpjs.sublist(
+          i,
+          i + 30 > cnpjs.length ? cnpjs.length : i + 30,
+        );
         if (lote.isEmpty) continue;
 
         final snapshotNuvem = await _firestore
@@ -41,7 +47,9 @@ class ProjetoService implements ExecucaoProjetoService {
         }
       }
     } catch (e) {
-      debugPrint("ProjetoService: modo offline ativo ou erro de sincronização: $e");
+      debugPrint(
+        "ProjetoService: modo offline ativo ou erro de sincronização: $e",
+      );
     }
 
     return await _dbHelper.getProjetos();
@@ -62,10 +70,15 @@ class ProjetoService implements ExecucaoProjetoService {
 
     bool sincronizado = false;
     try {
-      await _firestore.collection(FirestoreColecoes.projetos).doc(projeto.id).set(mapaCompleto);
+      await _firestore
+          .collection(FirestoreColecoes.projetos)
+          .doc(projeto.id)
+          .set(mapaCompleto);
       sincronizado = true;
     } catch (e) {
-      debugPrint('ProjetoService: projeto ${projeto.id} salvo apenas localmente (offline): $e');
+      debugPrint(
+        'ProjetoService: projeto ${projeto.id} salvo apenas localmente (offline): $e',
+      );
     }
 
     final mapaSqlite = Map<String, dynamic>.from(mapaCompleto)
@@ -76,7 +89,10 @@ class ProjetoService implements ExecucaoProjetoService {
       await _dbHelper.marcarProjetoSincronizado(projeto.id);
     }
 
-    await _dbHelper.substituirSalasDoProjeto(projeto.id, projeto.salas.map((s) => s.toMap()).toList());
+    await _dbHelper.substituirSalasDoProjeto(
+      projeto.id,
+      projeto.salas.map((s) => s.toMap()).toList(),
+    );
 
     await _dbHelper.deleteHandlingUnitsPorProjeto(projeto.id);
     for (final handlingUnit in projeto.handlingUnits) {
@@ -90,7 +106,10 @@ class ProjetoService implements ExecucaoProjetoService {
       });
       await _dbHelper.deleteFiltrosPorHandlingUnit(handlingUnit.id);
       for (final filtro in handlingUnit.filtros) {
-        await _dbHelper.insertFiltro({...filtro.toMap(), 'handlingUnitId': handlingUnit.id});
+        await _dbHelper.insertFiltro({
+          ...filtro.toMap(),
+          'handlingUnitId': handlingUnit.id,
+        });
       }
     }
   }
@@ -112,7 +131,12 @@ class ProjetoService implements ExecucaoProjetoService {
     required String area,
     required DateTime dataHora,
   }) async {
-    final chave = chaveSeparacao(cnpjEmpresa: cnpjEmpresa, tipoProjeto: tipoProjeto, area: area, dataHora: dataHora);
+    final chave = chaveSeparacao(
+      cnpjEmpresa: cnpjEmpresa,
+      tipoProjeto: tipoProjeto,
+      area: area,
+      dataHora: dataHora,
+    );
     final projetos = await _dbHelper.getProjetos();
     return projetos.any((p) {
       final data = DateTime.tryParse(p['dataCriacao']?.toString() ?? '');
@@ -130,20 +154,28 @@ class ProjetoService implements ExecucaoProjetoService {
   /// Envia os pontos de leitura locais do projeto para o doc do Firestore, para que o supervisor
   /// veja os resultados na aprovação mesmo em outro aparelho.
   @override
-  Future<void> sincronizarPontosLeitura(String projetoId, {bool exigirSincronizacao = false}) async {
+  Future<void> sincronizarPontosLeitura(
+    String projetoId, {
+    bool exigirSincronizacao = false,
+  }) async {
     try {
       final pontos = await _dbHelper.getPontosLeituraPorProjeto(projetoId);
-      await _firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(
-        {'pontosLeitura': pontos},
-        SetOptions(merge: true),
-      );
+      await _firestore
+          .collection(FirestoreColecoes.projetos)
+          .doc(projetoId)
+          .set({'pontosLeitura': pontos}, SetOptions(merge: true));
     } catch (e) {
-      debugPrint('ProjetoService: pontos de leitura salvos apenas localmente (offline?): $e');
+      debugPrint(
+        'ProjetoService: pontos de leitura salvos apenas localmente (offline?): $e',
+      );
       if (exigirSincronizacao) rethrow;
     }
   }
 
-  Future<void> adicionarHistorico(String projetoId, HistoryEntry entrada) async {
+  Future<void> adicionarHistorico(
+    String projetoId,
+    HistoryEntry entrada,
+  ) async {
     final projetosLocais = await _dbHelper.getProjetos();
     final projetoAtual = projetosLocais.firstWhere(
       (p) => p['id'].toString() == projetoId,
@@ -157,18 +189,21 @@ class ProjetoService implements ExecucaoProjetoService {
 
     var sincronizado = false;
     try {
-      await _firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(
-        {'history': historicoAtual},
-        SetOptions(merge: true),
-      );
+      await _firestore
+          .collection(FirestoreColecoes.projetos)
+          .doc(projetoId)
+          .set({'history': historicoAtual}, SetOptions(merge: true));
       sincronizado = true;
     } catch (e) {
-      debugPrint('ProjetoService: evento de auditoria salvo apenas localmente (offline?): $e');
+      debugPrint(
+        'ProjetoService: evento de auditoria salvo apenas localmente (offline?): $e',
+      );
     }
 
     await _dbHelper.atualizarStatusEHistoricoProjeto(
       projetoId,
-      novoStatus: projetoAtual['status']?.toString() ?? StatusRelatorio.rascunho.name,
+      novoStatus:
+          projetoAtual['status']?.toString() ?? StatusRelatorio.rascunho.name,
       historicoCompleto: historicoAtual,
       sincronizado: sincronizado,
     );
@@ -177,29 +212,46 @@ class ProjetoService implements ExecucaoProjetoService {
   /// Persiste apenas o vínculo de instrumentos escaneados em campo (sem regravar salas/handling
   /// units), usado quando o técnico associa ferramentas durante a execução de um ensaio.
   @override
-  Future<void> atualizarFerramentasEscaneadas(String projetoId, Map<String, List<InstrumentoModel>> ferramentas) async {
-    final mapaSerializado = ferramentas.map((k, v) => MapEntry(k, v.map((i) => i.toMap()).toList()));
+  Future<void> atualizarFerramentasEscaneadas(
+    String projetoId,
+    Map<String, List<InstrumentoModel>> ferramentas,
+  ) async {
+    final mapaSerializado = ferramentas.map(
+      (k, v) => MapEntry(k, v.map((i) => i.toMap()).toList()),
+    );
 
     try {
-      await _firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(
-        {'ferramentasEscaneadas': mapaSerializado},
-        SetOptions(merge: true),
-      );
+      await _firestore
+          .collection(FirestoreColecoes.projetos)
+          .doc(projetoId)
+          .set({
+            'ferramentasEscaneadas': mapaSerializado,
+          }, SetOptions(merge: true));
     } catch (e) {
-      debugPrint('ProjetoService: ferramentas escaneadas salvas apenas localmente (offline?): $e');
+      debugPrint(
+        'ProjetoService: ferramentas escaneadas salvas apenas localmente (offline?): $e',
+      );
     }
 
-    await _dbHelper.atualizarFerramentasEscaneadasProjeto(projetoId, mapaSerializado);
+    await _dbHelper.atualizarFerramentasEscaneadasProjeto(
+      projetoId,
+      mapaSerializado,
+    );
   }
 
-  Future<void> atualizarParalelismo(String projetoId, RegistroParalelismo registro) async {
+  Future<void> atualizarParalelismo(
+    String projetoId,
+    RegistroParalelismo registro,
+  ) async {
     try {
-      await _firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(
-        {'paralelismo': registro.toMap()},
-        SetOptions(merge: true),
-      );
+      await _firestore
+          .collection(FirestoreColecoes.projetos)
+          .doc(projetoId)
+          .set({'paralelismo': registro.toMap()}, SetOptions(merge: true));
     } catch (e) {
-      debugPrint('ProjetoService: paralelismo salvo apenas localmente (offline?): $e');
+      debugPrint(
+        'ProjetoService: paralelismo salvo apenas localmente (offline?): $e',
+      );
     }
     await _dbHelper.atualizarParalelismoProjeto(projetoId, registro.toMap());
   }
@@ -208,13 +260,17 @@ class ProjetoService implements ExecucaoProjetoService {
   Future<void> salvarResultadoEnsaio(ResultadoEnsaioModel resultado) async {
     await _dbHelper.inserirResultadoEnsaio(resultado.toMap());
     try {
-      final resultados = await _dbHelper.getResultadosEnsaioPorProjeto(resultado.projetoId);
-      await _firestore.collection(FirestoreColecoes.projetos).doc(resultado.projetoId).set(
-        {'resultadosEnsaios': resultados},
-        SetOptions(merge: true),
+      final resultados = await _dbHelper.getResultadosEnsaioPorProjeto(
+        resultado.projetoId,
       );
+      await _firestore
+          .collection(FirestoreColecoes.projetos)
+          .doc(resultado.projetoId)
+          .set({'resultadosEnsaios': resultados}, SetOptions(merge: true));
     } catch (e) {
-      debugPrint('ProjetoService: resultado do ensaio salvo apenas localmente (offline?): $e');
+      debugPrint(
+        'ProjetoService: resultado do ensaio salvo apenas localmente (offline?): $e',
+      );
     }
   }
 
@@ -241,13 +297,18 @@ class ProjetoService implements ExecucaoProjetoService {
 
     var sincronizado = false;
     try {
-      await _firestore.collection(FirestoreColecoes.projetos).doc(projetoId).set(
-        {'status': novoStatus.name, 'history': historicoAtual},
-        SetOptions(merge: true),
-      );
+      await _firestore
+          .collection(FirestoreColecoes.projetos)
+          .doc(projetoId)
+          .set({
+            'status': novoStatus.name,
+            'history': historicoAtual,
+          }, SetOptions(merge: true));
       sincronizado = true;
     } catch (e) {
-      debugPrint('ProjetoService: status/histórico salvos apenas localmente (offline?): $e');
+      debugPrint(
+        'ProjetoService: status/histórico salvos apenas localmente (offline?): $e',
+      );
       if (exigirSincronizacao) rethrow;
     }
 

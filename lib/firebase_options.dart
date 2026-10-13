@@ -45,7 +45,7 @@ class DefaultFirebaseOptions {
 
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyDSN7NzGj9CVkfJih98YaLaYV0WJnVQd9U',
-    appId: '1:1062587633068:android:be110eef50e67003257e09',
+    appId: '1:1062587633068:android:a59fb924b63a92d4257e09',
     messagingSenderId: '1062587633068',
     projectId: 'ocrion-eda2a',
     storageBucket: 'ocrion-eda2a.firebasestorage.app',

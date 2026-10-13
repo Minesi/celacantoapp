@@ -553,10 +553,6 @@ function agruparPontos(projeto) {
   return grupos;
 }
 
-function valorDoPonto(pontos, numeroPonto) {
-  return pontos.find((ponto) => numero(ponto.numeroPonto, Number.NaN) === numeroPonto) || null;
-}
-
 function nomeEnsaio(tipo) {
   return TEXTOS.ensaios[tipo] ? TEXTOS.ensaios[tipo].nome : tipo;
 }

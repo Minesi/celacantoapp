@@ -1,4 +1,4 @@
-package com.example.celacantoapp
+package br.com.ocrion.app
 
 import android.content.Intent
 import android.content.ContentValues

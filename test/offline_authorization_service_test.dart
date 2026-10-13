@@ -14,6 +14,11 @@ class _MemoryStorage implements OfflineAuthorizationStorage {
   Future<void> write({required String key, required String value}) async {
     values[key] = value;
   }
+
+  @override
+  Future<void> delete({required String key}) async {
+    values.remove(key);
+  }
 }
 
 OfflineAuthorizationService _service(_MemoryStorage storage) {

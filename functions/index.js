@@ -27,7 +27,6 @@ const { enviarRelatorioEmail, REMETENTE_PADRAO } = require("./email_service");
 initializeApp();
 
 const CONTENT_TYPE_DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
-const URL_EXPIRACAO_MS = 7 * 24 * 60 * 60 * 1000; // 7 dias
 
 // Compatibilidade com o esquema legado de leituras (usado pelos 5 templates atuais).
 const MAX_SLOTS_LEITURA = 10;
@@ -79,6 +78,70 @@ exports.cadastrarUsuario = functions.runWith({ invoker: "public" }).https.onCall
     console.error("Falha ao cadastrar usuário:", erro);
     throw new functions.https.HttpsError("internal", "Não foi possível cadastrar o usuário.");
   }
+});
+
+exports.excluirMinhaConta = functions.runWith({ invoker: "public" }).https.onCall(async (_data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Autenticacao necessaria.");
+
+  const authTime = Number(context.auth.token.auth_time);
+  const idadeAutenticacaoMs = Date.now() - authTime * 1000;
+  if (!Number.isFinite(authTime) || idadeAutenticacaoMs < 0 || idadeAutenticacaoMs > 5 * 60 * 1000) {
+    throw new functions.https.HttpsError(
+      "failed-precondition",
+      "Confirme sua senha novamente antes de excluir a conta."
+    );
+  }
+
+  const db = getFirestore();
+  const uid = context.auth.uid;
+  const usuarioRef = db.collection("usuarios").doc(uid);
+  const usuarioSnapshot = await usuarioRef.get();
+  const usuario = usuarioSnapshot.exists ? usuarioSnapshot.data() || {} : {};
+  const email = String(usuario.email || context.auth.token.email || "").trim().toLowerCase();
+  const dominio = String(usuario.dominio_empresa || dominioDoEmail(email)).trim().toLowerCase();
+
+  if (usuario.perfil === "admin") {
+    if (!dominio) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Não foi possível confirmar o domínio do administrador."
+      );
+    }
+    const administradores = await db.collection("usuarios").where("perfil", "==", "admin").get();
+    const existeOutroAdministrador = administradores.docs.some((doc) => {
+      if (doc.id === uid) return false;
+      const outro = doc.data() || {};
+      const dominioOutro = String(outro.dominio_empresa || dominioDoEmail(outro.email)).trim().toLowerCase();
+      return dominioOutro === dominio;
+    });
+    if (!existeOutroAdministrador) {
+      throw new functions.https.HttpsError(
+        "failed-precondition",
+        "Cadastre outro administrador antes de excluir esta conta."
+      );
+    }
+  }
+
+  const refsParaExcluir = [
+    usuarioRef,
+    db.collection("totp_segredos").doc(uid),
+    db.collection("autorizacao_chaves_offline").doc(uid),
+    db.collection("liberacoes_tentativas").doc(uid),
+  ];
+  const batch = db.batch();
+  refsParaExcluir.forEach((ref) => batch.delete(ref));
+  await batch.commit();
+
+  try {
+    await getAuth().deleteUser(uid);
+  } catch (erro) {
+    if (erro.code !== "auth/user-not-found") {
+      console.error("Falha ao remover usuário do Auth após limpar os dados:", erro);
+      throw new functions.https.HttpsError("internal", "Não foi possível concluir a exclusão da conta.");
+    }
+  }
+
+  return { ok: true };
 });
 // Callable precisa de invoker público no IAM; a autenticação é validada abaixo via context.auth.
 exports.gerarRelatorioDocx = functions.runWith({ invoker: "public" }).https.onCall(async (data, context) => {

@@ -19,8 +19,8 @@ function decodificarToken(token, campo) {
   const texto = decodificarBase64Url(token, campo).toString("utf8");
   try {
     return { texto, valor: JSON.parse(texto) };
-  } catch (_erro) {
-    throw new Error(`${campo} JSON invalido.`);
+  } catch (erro) {
+    throw new Error(`${campo} JSON invalido.`, { cause: erro });
   }
 }
 

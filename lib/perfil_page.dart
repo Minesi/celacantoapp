@@ -438,6 +438,89 @@ class _PerfilPageState extends State<PerfilPage> {
     }
   }
 
+  Future<void> _solicitarExclusaoConta() async {
+    final senhaController = TextEditingController();
+    final confirmacaoController = TextEditingController();
+    String? erro;
+    final confirmado = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Excluir minha conta?'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Seu acesso e seu perfil serão excluídos. Projetos e relatórios técnicos já emitidos serão mantidos para o histórico da empresa.',
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: senhaController,
+                  obscureText: true,
+                  decoration: const InputDecoration(labelText: 'Senha atual'),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: confirmacaoController,
+                  decoration: const InputDecoration(labelText: 'Digite EXCLUIR para confirmar'),
+                ),
+                if (erro != null) ...[
+                  const SizedBox(height: 12),
+                  Text(erro!, style: const TextStyle(color: Colors.red)),
+                ],
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancelar')),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: Colors.red),
+              onPressed: () {
+                if (senhaController.text.isEmpty) {
+                  setDialogState(() => erro = 'Informe sua senha atual.');
+                  return;
+                }
+                if (confirmacaoController.text.trim().toUpperCase() != 'EXCLUIR') {
+                  setDialogState(() => erro = 'Digite EXCLUIR para confirmar.');
+                  return;
+                }
+                Navigator.of(dialogContext).pop(true);
+              },
+              child: const Text('Excluir conta'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final senha = senhaController.text;
+    senhaController.dispose();
+    confirmacaoController.dispose();
+    if (confirmado != true || !mounted) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator()),
+    );
+    final sucesso = await _authService.excluirMinhaConta(senhaAtual: senha);
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    if (sucesso) {
+      Navigator.of(context).popUntil((route) => route.isFirst);
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Não foi possível excluir a conta. Verifique a senha e se existe outro administrador.'),
+          backgroundColor: Colors.red,
+        ),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -575,6 +658,16 @@ class _PerfilPageState extends State<PerfilPage> {
                         child: const Text('Atualizar Senha', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                       ),
                       const SizedBox(height: 24),
+                      OutlinedButton.icon(
+                        onPressed: _solicitarExclusaoConta,
+                        icon: const Icon(Icons.delete_forever_outlined),
+                        label: const Text('Excluir minha conta'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.red,
+                          side: const BorderSide(color: Colors.red),
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                        ),
+                      ),
                     ],
                   ),
                 ),

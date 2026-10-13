@@ -97,7 +97,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Celacantoapp Login',
+      title: 'Ocrion Relatórios',
       theme: ThemeData(
         primarySwatch: Colors.blue,
         inputDecorationTheme: InputDecorationTheme(
@@ -270,7 +270,7 @@ class _LoginPageState extends State<LoginPage> {
                 mainAxisAlignment: MainAxisAlignment.center,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Image.asset('assets/images/logo.png', height: 100),
+                  Image.asset('assets/images/ocrion_logo.jpg', height: 100),
                   const SizedBox(height: 16),
 
                   // Título dinâmico baseado no modo atual

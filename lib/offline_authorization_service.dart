@@ -11,6 +11,8 @@ abstract interface class OfflineAuthorizationStorage {
   Future<String?> read({required String key});
 
   Future<void> write({required String key, required String value});
+
+  Future<void> delete({required String key});
 }
 
 class _FlutterSecureAuthorizationStorage implements OfflineAuthorizationStorage {
@@ -23,6 +25,9 @@ class _FlutterSecureAuthorizationStorage implements OfflineAuthorizationStorage 
 
   @override
   Future<void> write({required String key, required String value}) => _storage.write(key: key, value: value);
+
+  @override
+  Future<void> delete({required String key}) => _storage.delete(key: key);
 }
 
 class OfflineAuthorizationContext {
@@ -312,6 +317,14 @@ class OfflineAuthorizationService {
       final chave = item['publicKey']?.toString() ?? '';
       if (uid.isEmpty || chave.isEmpty) continue;
       await _salvarChavePublica(uid, _decodificarBytes(chave));
+    }
+  }
+
+  Future<void> removerDadosLocais(String supervisorUid) async {
+    await _storage.delete(key: _privateKeyPrefix + supervisorUid);
+    final chaves = await _lerChavesPublicas();
+    if (chaves.remove(supervisorUid) != null) {
+      await _storage.write(key: _publicKeysStorageKey, value: jsonEncode(chaves));
     }
   }
 
