@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -50,22 +51,47 @@ Future<String> _enviarPorHttps({
   }
 
   final bytes = await arquivo.readAsBytes();
+  final token = base64UrlEncode(List<int>.generate(24, (_) => Random.secure().nextInt(256)));
+  final boundary = 'celacanto_${DateTime.now().microsecondsSinceEpoch}';
   final uri = Uri.parse(
     'https://firebasestorage.googleapis.com/v0/b/'
     '${Uri.encodeComponent(bucket)}/o'
-    '?uploadType=media&name=${Uri.encodeComponent(caminhoStorage)}',
+    '?uploadType=multipart&name=${Uri.encodeComponent(caminhoStorage)}',
   );
+  final metadata = utf8.encode(
+    '${jsonEncode({
+      'name': caminhoStorage,
+      'contentType': contentType,
+      'metadata': {'firebaseStorageDownloadTokens': token},
+    })}\r\n',
+  );
+  final prefixo = utf8.encode(
+    '--$boundary\r\n'
+    'Content-Type: application/json; charset=UTF-8\r\n\r\n',
+  );
+  final separador = utf8.encode(
+    '--$boundary\r\nContent-Type: $contentType\r\n\r\n',
+  );
+  final sufixo = utf8.encode('\r\n--$boundary--\r\n');
   final client = HttpClient();
 
   try {
     final request = await client.postUrl(uri);
     request.headers.set(
       HttpHeaders.authorizationHeader,
-      'Firebase $idToken',
+      'Bearer $idToken',
     );
-    request.headers.contentType = ContentType.parse(contentType);
-    request.contentLength = bytes.length;
+    request.headers.contentType = ContentType(
+      'multipart',
+      'related',
+      parameters: {'boundary': boundary},
+    );
+    request.contentLength = prefixo.length + metadata.length + separador.length + bytes.length + sufixo.length;
+    request.add(prefixo);
+    request.add(metadata);
+    request.add(separador);
     request.add(bytes);
+    request.add(sufixo);
 
     final response = await request.close().timeout(const Duration(seconds: 30));
     final resposta = await response.transform(utf8.decoder).join();
@@ -76,7 +102,9 @@ Future<String> _enviarPorHttps({
       );
     }
 
-    return await FirebaseStorage.instance.ref(caminhoStorage).getDownloadURL();
+    return 'https://firebasestorage.googleapis.com/v0/b/'
+      '${Uri.encodeComponent(bucket)}/o/${Uri.encodeComponent(caminhoStorage)}'
+      '?alt=media&token=$token';
   } finally {
     client.close(force: true);
   }

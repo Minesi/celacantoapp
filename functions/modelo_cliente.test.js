@@ -4,7 +4,12 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const PizZip = require("pizzip");
 const Docxtemplater = require("docxtemplater");
-const { condicoesDeEnsaios, instrumentosUtilizados, normalizarTagsTemplate } = require("./modelo_cliente");
+const {
+  condicoesDeEnsaios,
+  instrumentosUtilizados,
+  normalizarTagsTemplate,
+  placeholdersDeResultados,
+} = require("./modelo_cliente");
 
 function renderizarFluxoLaminar(projeto) {
   const zip = new PizZip(fs.readFileSync(path.join(__dirname, "templates", "fluxo_laminar.docx")));
@@ -69,6 +74,37 @@ test("seleciona somente ferramentas de ensaios executados e remove TAG repetida"
   ]);
 });
 
+test("separa resultados de velocidade, integridade e paralelismo", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [
+      { ensaioTipo: "velocidadeFluxo", filtroIndice: "1", valor05um: "0,46" },
+      { ensaioTipo: "integridadeFiltros", valor05um: "0,006" },
+      { ensaioTipo: "paralelismoFluxo", valor05um: "3" },
+      { ensaioTipo: "paralelismoFluxo", valor05um: "5" },
+    ],
+    resultadosEnsaios: [
+      {
+        ensaioTipo: "velocidadeFluxo",
+        dados: { media: "0.46", desvioPadraoRelativo: "12.5" },
+      },
+    ],
+  });
+
+  assert.equal(dados.res_vel, "0,46");
+  assert.equal(dados.cal_res_vel, "12,5%");
+  assert.equal(dados.res_media_vel, "0,46");
+  assert.equal(dados.cal_res_media_vel, "12,5%");
+  assert.equal(dados.cal_res_int, "0,006%");
+  assert.equal(dados.res_para, "3");
+  assert.equal(dados.cal_res_para, "5°");
+  assert.equal(dados.cal_res_para_1, "3°");
+  assert.equal(dados.cal_res_para_2, "5°");
+  assert.equal(dados.res_vel_p1_f1, "0,46");
+  assert.equal(dados.res_vel_p1_f2, "-");
+  assert.equal(dados.res_vel.includes("|"), false);
+  assert.equal(dados.cal_res_vel.includes("|"), false);
+});
+
 test("modelo Fluxo Laminar com 1 teste mostra apenas a integridade", () => {
   const texto = renderizarFluxoLaminar({ ensaiosSelecionados: ["integridadeFiltros"] });
   assert.match(texto, /Integridade e Estanqueidade dos Filtros HEPA/);
@@ -102,36 +138,91 @@ test("modelo Fluxo Laminar inclui contagem e paralelismo quando selecionados", (
   assert.equal(texto.includes("NÍVEL DE RUÍDO"), false);
 });
 
-test("modelo Fluxo Laminar renderiza tabelas estruturadas com múltiplos itens", () => {
+test("modelo Fluxo Laminar não exibe o registro estruturado dos ensaios", () => {
   const zip = new PizZip(fs.readFileSync(path.join(__dirname, "templates", "fluxo_laminar.docx")));
   normalizarTagsTemplate(zip);
   const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, nullGetter: () => "" });
   doc.render({
     "NOME DO CLIENTE": "CLIENTE",
     ...condicoesDeEnsaios({ ensaiosSelecionados: [] }),
-    handlingUnits: [
-      { nome: "HU-A", numero: "1", temFiltroTerminalTexto: "Sim", filtrosResumo: "2x H14", salas: "SALA-A" },
-      { nome: "HU-B", numero: "2", temFiltroTerminalTexto: "Nao", filtrosResumo: "1x F9", salas: "SALA-B" },
-    ],
-    salas: [
-      { nome: "SALA-A", area: 10, volume: 30, maquina: "HU-A", filtrosResumo: "2x H14" },
-      { nome: "SALA-B", area: 12, volume: 36, maquina: "HU-B", filtrosResumo: "1x F9" },
-    ],
-    resultadosPorEnsaio: [
-      { ensaioTipo: "velocidadeFluxo", sala: "SALA-A", conformeTexto: "Conforme", resumo: "media: 0,45" },
-      { ensaioTipo: "integridadeFiltros", sala: "SALA-B", conformeTexto: "Nao conforme", resumo: "criterio: 0,01%" },
-    ],
-    pontosPorEnsaio: [
-      { ensaioTipo: "velocidadeFluxo", sala: "SALA-A", rotulo: "Filtro 1 (H14)", valorPrincipal: "0,45", valorSecundario: "-", estado: "Em repouso" },
-      { ensaioTipo: "velocidadeFluxo", sala: "SALA-A", rotulo: "Filtro 2 (H14)", valorPrincipal: "0,47", valorSecundario: "-", estado: "Em repouso" },
-    ],
   });
   const texto = doc.getZip().file("word/document.xml").asText().replace(/<[^>]+>/g, "");
-  for (const esperado of ["HU-A", "HU-B", "SALA-A", "SALA-B", "Filtro 1 (H14)", "Filtro 2 (H14)", "Nao conforme"]) {
-    assert.equal(texto.includes(esperado), true, esperado);
+  for (const removido of ["REGISTRO ESTRUTURADO DOS ENSAIOS", "MAQUINAS", "SALAS E FILTROS", "PONTOS DE LEITURA"]) {
+    assert.equal(texto.includes(removido), false, removido);
   }
   assert.equal(texto.includes("{#handlingUnits}"), false);
   assert.equal(texto.includes("{/pontosPorEnsaio}"), false);
+});
+
+test("modelo Fluxo Laminar usa tags exclusivas para cada resultado", () => {
+  const zip = new PizZip(fs.readFileSync(path.join(__dirname, "templates", "fluxo_laminar.docx")));
+  const documento = zip.file("word/document.xml").asText();
+  const cabecalho = zip.file("word/header1.xml").asText();
+
+  for (const tag of [
+    "{res_vel}",
+    "{cal_res_vel}",
+    "{res_media_vel}",
+    "{cal_res_media_vel}",
+    "{res_int}",
+    "{cal_res_int}",
+    "{res_vis}",
+    "{res_para}",
+    "{cal_res_para}",
+  ]) {
+    assert.match(documento, new RegExp(tag.replace(/[{}]/g, "\\$&")), tag);
+  }
+  assert.match(cabecalho, /\{CODIGO SEQUENCIAL\}/);
+  for (const tagAntiga of ["{RESULTADO}", "{CALCULO RESULTADO}", "{Resultado 1}", "{Calculo resultado 1}"]) {
+    assert.equal(documento.includes(tagAntiga), false, tagAntiga);
+  }
+  assert.equal(documento.includes("REGISTRO ESTRUTURADO DOS ENSAIOS"), false);
+  assert.equal((documento.match(/<w:pageBreakBefore\/>/g) || []).length >= 11, true);
+});
+
+test("modelo Fluxo Laminar renderiza unidades e codigo nos campos corretos", () => {
+  const zip = new PizZip(fs.readFileSync(path.join(__dirname, "templates", "fluxo_laminar.docx")));
+  normalizarTagsTemplate(zip);
+  const pontosLeitura = [
+    { ensaioTipo: "avaliacaoFiltragem", filtroIndice: "1", valor05um: "0.45" },
+    { ensaioTipo: "velocidadeFluxo", filtroIndice: "1", valor05um: "0.46" },
+    { ensaioTipo: "integridadeFiltros", filtroIndice: "1", valor05um: "0.006" },
+    { ensaioTipo: "nivelRuido", valor05um: "60" },
+    { ensaioTipo: "luminosidade", valor05um: "500" },
+    { ensaioTipo: "contagemParticulas", valor05um: "100", valor5um: "5", estado: "repouso" },
+    { ensaioTipo: "contagemParticulas", valor05um: "120", valor5um: "6", estado: "operacao" },
+    { ensaioTipo: "visualizacaoFluxo", valor05um: "Fluxo descendente conforme" },
+    { ensaioTipo: "paralelismoFluxo", valor05um: "3" },
+    { ensaioTipo: "paralelismoFluxo", valor05um: "5" },
+  ];
+  const valores = placeholdersDeResultados({
+    pontosLeitura,
+    resultadosEnsaios: [{ ensaioTipo: "velocidadeFluxo", dados: { media: "0.46", desvioPadraoRelativo: "12.5" } }],
+  });
+  const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, nullGetter: () => "" });
+  doc.render({
+    ...condicoesDeEnsaios({
+      ensaiosSelecionados: [
+        "avaliacaoFiltragem",
+        "velocidadeFluxo",
+        "integridadeFiltros",
+        "nivelRuido",
+        "luminosidade",
+        "contagemParticulas",
+        "visualizacaoFluxo",
+        "paralelismoFluxo",
+      ],
+    }),
+    "CODIGO SEQUENCIAL": "PRJ-TESTE-001",
+    ...valores,
+  });
+  const documento = doc.getZip().file("word/document.xml").asText().replace(/<[^>]+>/g, "");
+  const cabecalho = doc.getZip().file("word/header1.xml").asText().replace(/<[^>]+>/g, "");
+  for (const esperado of ["0,46", "12,5%", "Cálculo: 12,5%", "0,006%", "3°", "5°", "Fluxo descendente conforme"]) {
+    assert.equal(documento.includes(esperado), true, esperado);
+  }
+  assert.equal(cabecalho.includes("PRJ-TESTE-001"), true);
+  assert.equal(documento.includes("REGISTRO ESTRUTURADO DOS ENSAIOS"), false);
 });
 
 test("modelo Fluxo Laminar repete a linha de calibração uma vez por instrumento", () => {

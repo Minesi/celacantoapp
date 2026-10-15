@@ -14,10 +14,7 @@ class _FakeExecucaoProjetoService implements ExecucaoProjetoService {
   int sincronizacoes = 0;
 
   @override
-  Future<void> atualizarFerramentasEscaneadas(
-    String projetoId,
-    Map<String, List<InstrumentoModel>> ferramentas,
-  ) async {}
+  Future<void> atualizarFerramentasEscaneadas(String projetoId, Map<String, List<InstrumentoModel>> ferramentas) async {}
 
   @override
   Future<void> salvarResultadoEnsaio(ResultadoEnsaioModel resultado) async {
@@ -34,32 +31,17 @@ class _FakeExecucaoDatabase implements ExecucaoDatabase {
   final pontos = <Map<String, dynamic>>[];
 
   @override
-  Future<int> deletePontosLeituraPorSalaEEnsaio(
-    String salaId,
-    String ensaioTipo,
-  ) async {
-    pontos.removeWhere(
-      (ponto) => ponto['salaId'] == salaId && ponto['ensaioTipo'] == ensaioTipo,
-    );
+  Future<int> deletePontosLeituraPorSalaEEnsaio(String salaId, String ensaioTipo) async {
+    pontos.removeWhere((ponto) => ponto['salaId'] == salaId && ponto['ensaioTipo'] == ensaioTipo);
     return 0;
   }
 
   @override
-  Future<Map<String, dynamic>?> getResultadoEnsaio(
-    String salaId,
-    String ensaioTipo,
-  ) async => null;
+  Future<Map<String, dynamic>?> getResultadoEnsaio(String salaId, String ensaioTipo) async => null;
 
   @override
-  Future<List<Map<String, dynamic>>> getPontosLeituraPorSalaEEnsaio(
-    String salaId,
-    String ensaioTipo,
-  ) async => pontos
-      .where(
-        (ponto) =>
-            ponto['salaId'] == salaId && ponto['ensaioTipo'] == ensaioTipo,
-      )
-      .toList();
+  Future<List<Map<String, dynamic>>> getPontosLeituraPorSalaEEnsaio(String salaId, String ensaioTipo) async =>
+      pontos.where((ponto) => ponto['salaId'] == salaId && ponto['ensaioTipo'] == ensaioTipo).toList();
 
   @override
   Future<int> insertPontoLeitura(Map<String, dynamic> ponto) async {
@@ -70,27 +52,23 @@ class _FakeExecucaoDatabase implements ExecucaoDatabase {
 }
 
 InstrumentoModel _instrumento(String tipo) => InstrumentoModel(
-  tipo: tipo,
-  tag: 'TAG-01',
-  numeroSerie: 'SERIE-01',
-  numeroCertificado: 'CERT-01',
-  validade: '12/2099',
-  estaValido: true,
-  dominioEmpresa: 'teste.local',
-);
+      tipo: tipo,
+      tag: 'TAG-01',
+      numeroSerie: 'SERIE-01',
+      numeroCertificado: 'CERT-01',
+      validade: '12/2099',
+      estaValido: true,
+      dominioEmpresa: 'teste.local',
+    );
 
 SalaModel _sala({TipoEnsaio? tipo}) => SalaModel(
-  id: 'S1',
-  nome: 'Sala 1',
-  area: 10,
-  volume: 30,
-  grau: GrauSala.d,
-  configEnsaios: tipo == null
-      ? const {}
-      : {
-          tipo.name: {'pontos': '1'},
-        },
-);
+      id: 'S1',
+      nome: 'Sala 1',
+      area: 10,
+      volume: 30,
+      grau: GrauSala.d,
+      configEnsaios: tipo == null ? const {} : {tipo.name: {'pontos': '1'}},
+    );
 
 Widget _app({
   required EnsaioModel ensaio,
@@ -113,9 +91,7 @@ Widget _app({
       filtroIds: const [null],
       dbHelper: database,
       projetoService: projetoService,
-      ferramentasJaEscaneadas: {
-        ensaio.ferramentasNecessarias.single: [instrumento],
-      },
+      ferramentasJaEscaneadas: {ensaio.ferramentasNecessarias.single: [instrumento]},
       capturadorFoto: capturadorFoto,
       enviarEvidencia: ({required caminhoArquivo, required caminhoStorage}) async =>
           'https://firebasestorage.googleapis.com/v0/b/teste/o/$caminhoStorage',
@@ -134,18 +110,16 @@ void main() {
       ferramentasNecessarias: const ['Máquina de Fumaça'],
     );
 
-    await tester.pumpWidget(
-      _app(
-        ensaio: ensaio,
-        sala: _sala(),
-        database: database,
-        projetoService: projetoService,
-        capturadorFoto: (_) async {
-          capturas++;
-          return 'foto-fake.jpg';
-        },
-      ),
-    );
+    await tester.pumpWidget(_app(
+      ensaio: ensaio,
+      sala: _sala(),
+      database: database,
+      projetoService: projetoService,
+      capturadorFoto: (_) async {
+        capturas++;
+        return 'foto-fake.jpg';
+      },
+    ));
     await tester.pump();
 
     expect(find.text('Anexar Foto de Evidência'), findsOneWidget);
@@ -156,9 +130,7 @@ void main() {
     expect(find.text('Foto Anexada ✓'), findsOneWidget);
   });
 
-  testWidgets('mantém leituras separadas para repouso e operação', (
-    tester,
-  ) async {
+  testWidgets('mantém leituras separadas para repouso e operação', (tester) async {
     final database = _FakeExecucaoDatabase();
     final projetoService = _FakeExecucaoProjetoService();
     final ensaio = EnsaioModel(
@@ -167,15 +139,13 @@ void main() {
       ferramentasNecessarias: const ['Contador de Partículas'],
     );
 
-    await tester.pumpWidget(
-      _app(
-        ensaio: ensaio,
-        sala: _sala(tipo: TipoEnsaio.contagemParticulas),
-        database: database,
-        projetoService: projetoService,
-        capturadorFoto: (_) async => 'foto-fake.jpg',
-      ),
-    );
+    await tester.pumpWidget(_app(
+      ensaio: ensaio,
+      sala: _sala(tipo: TipoEnsaio.contagemParticulas),
+      database: database,
+      projetoService: projetoService,
+      capturadorFoto: (_) async => 'foto-fake.jpg',
+    ));
     await tester.pump();
 
     await tester.enterText(find.bySemanticsLabel('Ponto 1 — 0,5µm'), '10');
@@ -203,16 +173,8 @@ void main() {
     await tester.pumpAndSettle();
     final pontos = database.pontos;
     expect(pontos, hasLength(2));
-    expect(pontos.map((ponto) => ponto['estado']).toSet(), {
-      'repouso',
-      'operacao',
-    });
-    expect(
-      pontos
-          .map((ponto) => ponto['id'].toString())
-          .every((id) => id.contains('-')),
-      isTrue,
-    );
+    expect(pontos.map((ponto) => ponto['estado']).toSet(), {'repouso', 'operacao'});
+    expect(pontos.map((ponto) => ponto['id'].toString()).every((id) => id.contains('-')), isTrue);
     expect(projetoService.resultados, hasLength(1));
   });
 }

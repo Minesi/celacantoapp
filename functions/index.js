@@ -21,7 +21,12 @@ const liberacaoPolicy = require("./liberacao_policy");
 const offlineAuthorization = require("./offline_authorization");
 const { renderizarDocx } = require("./relatorio_docx");
 const { construirDocumento, extrairConclusao } = require("./relatorio_documento");
-const { condicoesDeEnsaios, instrumentosUtilizados, normalizarTagsTemplate } = require("./modelo_cliente");
+const {
+  condicoesDeEnsaios,
+  instrumentosUtilizados,
+  normalizarTagsTemplate,
+  placeholdersDeResultados,
+} = require("./modelo_cliente");
 const { enviarRelatorioEmail, REMETENTE_PADRAO } = require("./email_service");
 
 initializeApp();
@@ -514,6 +519,7 @@ async function montarDadosMerge(projeto) {
   const handlingUnits = (projeto.handlingUnits || []).map((handlingUnit) => mapearHandlingUnit(handlingUnit, projeto.salas));
   const dados = {
     PROJETO: projeto.tipoProjeto || "",
+    "CODIGO SEQUENCIAL": projeto.id || "",
     EMPRESA: projeto.nomeEmpresa || "",
     CNPJ: projeto.cnpjEmpresa || "",
     SISTEMA: projeto.sistemaNome || "",
@@ -932,6 +938,11 @@ function aplicarPlaceholdersDeEnsaios(dados, projeto, contexto) {
   const maquinas = maquinasDasSalas.length > 0 ? maquinasDasSalas : handlingUnits;
   const paralelismo = mapaNormalizado(projeto.paralelismo);
   const conclusao = extrairConclusao(projeto);
+  Object.assign(dados, placeholdersDeResultados({
+    pontosLeitura,
+    resultadosEnsaios,
+    paralelismo,
+  }));
   const valoresVelocidade = resultadosPorTipo("velocidadeFluxo").map((resultado) => {
     const resultadoDados = resultado.dados || {};
     const media = resultadoDados.media === undefined ? "" : formatarNumeroRelatorio(resultadoDados.media);
@@ -1007,8 +1018,20 @@ function aplicarPlaceholdersDeEnsaios(dados, projeto, contexto) {
   dados["SALA"] = linhasUnicas(salasIntegridade.map((sala) => sala.nome));
   for (let indice = 0; indice < 4; indice++) {
     const ponto = pontosIntegridade[indice];
-    dados[`PONTO${indice + 1}`] = ponto
+    dados[`ponto_int_${indice + 1}`] = ponto
       ? formatarPontoParaMerge(ponto, salasPorId.get(valorTexto(ponto.salaId)))
+      : "-";
+  }
+
+  for (let indice = 0; indice < 3; indice++) {
+    const numero = indice + 1;
+    const pontoAvaliacao = pontosPorTipo("avaliacaoFiltragem")[indice];
+    const pontoVelocidade = pontosPorTipo("velocidadeFluxo")[indice];
+    dados[`ponto_aval_${numero}`] = pontoAvaliacao
+      ? formatarPontoParaMerge(pontoAvaliacao, salasPorId.get(valorTexto(pontoAvaliacao.salaId)))
+      : "-";
+    dados[`ponto_vel_${numero}`] = pontoVelocidade
+      ? formatarPontoParaMerge(pontoVelocidade, salasPorId.get(valorTexto(pontoVelocidade.salaId)))
       : "-";
   }
 
@@ -1035,25 +1058,6 @@ function aplicarPlaceholdersDeEnsaios(dados, projeto, contexto) {
   dados["SUPERVISORS"] = conclusao && conclusao.cumpre === true ? "X" : "";
   dados["SUPERVISORN"] = conclusao && conclusao.cumpre === false ? "X" : "";
   dados["COMENT ELABORADOR"] = conclusao ? conclusao.comentarios || "" : "";
-  dados.resultadosPorEnsaio = resultadosEnsaios.map((resultado) => ({
-    ...resultado,
-    sala: salasPorId.get(valorTexto(resultado.salaId))?.nome || "",
-    conformeTexto: resultado.conforme === true ? "Conforme" : resultado.conforme === false ? "Nao conforme" : "Nao informado",
-    resumo: Object.entries(resultado.dados || {})
-      .filter(([, valor]) => valor !== null && valor !== undefined && valorTexto(valor))
-      .map(([chave, valor]) => `${chave}: ${valorTexto(valor)}`)
-      .join("; ") || "-",
-  }));
-  dados.pontosPorEnsaio = pontosLeitura.map((ponto) => {
-    const sala = salasPorId.get(valorTexto(ponto.salaId));
-    return {
-      ...ponto,
-      sala: sala?.nome || "",
-      rotulo: formatarPontoParaMerge(ponto, sala),
-      valorPrincipal: pontoPrimario(ponto),
-      valorSecundario: pontoSecundario(ponto),
-    };
-  });
 }
 
 // --- Liberacao do tecnico por codigo TOTP (Google/Microsoft Authenticator) ---

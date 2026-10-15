@@ -21,7 +21,7 @@ class ValidacaoEnsaioService {
     final principais = valoresPrincipais.toList();
     final secundarios = valoresSecundarios.toList();
     final erros = <String>[];
-    final ehTexto = tipo == TipoEnsaio.visualizacaoFluxo || tipo == TipoEnsaio.paralelismoFluxo;
+    final ehTexto = tipo == TipoEnsaio.visualizacaoFluxo;
     final limiteMinimo = _numero(configuracao['criterioMin']);
     final limiteMaximo = _numero(configuracao['criterioMax']);
     final limiteMaximo5um = _numero(configuracao['criterioMax5um']);

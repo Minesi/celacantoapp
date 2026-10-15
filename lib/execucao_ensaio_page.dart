@@ -14,8 +14,7 @@ import 'storage_upload_client.dart';
 import 'supervisor_override_dialog.dart';
 import 'validacao_ensaio_service.dart';
 
-typedef CapturadorFotoEvidencia =
-    Future<String?> Function(BuildContext context);
+typedef CapturadorFotoEvidencia = Future<String?> Function(BuildContext context);
 
 typedef EnviadorEvidencia =
     Future<String> Function({
@@ -30,11 +29,7 @@ class ResultadoExecucaoEnsaio {
   final LiberacaoSupervisor? liberacao;
   final DateTime dataFim;
 
-  const ResultadoExecucaoEnsaio({
-    required this.completo,
-    required this.dataFim,
-    this.liberacao,
-  });
+  const ResultadoExecucaoEnsaio({required this.completo, required this.dataFim, this.liberacao});
 }
 
 class ExecucaoEnsaioPage extends StatefulWidget {
@@ -92,39 +87,29 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
   bool _salvando = false;
   bool _enviandoFoto = false;
 
-  bool get _ehContagemParticulas =>
-      widget.ensaio.tipo == TipoEnsaio.contagemParticulas;
+  bool get _ehContagemParticulas => widget.ensaio.tipo == TipoEnsaio.contagemParticulas;
   bool get _exigeFotoEvidencia => ensaioExigeFotoEvidencia(widget.ensaio.tipo);
   bool get _ehRecuperacaoOuEnergia =>
-      widget.ensaio.tipo == TipoEnsaio.recuperacaoParticulas ||
-      widget.ensaio.tipo == TipoEnsaio.quedaEnergia;
+      widget.ensaio.tipo == TipoEnsaio.recuperacaoParticulas || widget.ensaio.tipo == TipoEnsaio.quedaEnergia;
   bool get _permiteValorNegativo => widget.ensaio.tipo == TipoEnsaio.pressao;
-  bool get _resultadoTextual =>
-      widget.ensaio.tipo == TipoEnsaio.visualizacaoFluxo;
+  bool get _resultadoTextual => widget.ensaio.tipo == TipoEnsaio.visualizacaoFluxo;
 
   @override
   void initState() {
     super.initState();
     _instrumentosPorTipo = {
-      for (final entry in widget.ferramentasJaEscaneadas.entries)
-        entry.key: List<InstrumentoModel>.from(entry.value),
+      for (final entry in widget.ferramentasJaEscaneadas.entries) entry.key: List<InstrumentoModel>.from(entry.value),
     };
     _contagemPrincipaisPorEstado = _ehContagemParticulas
         ? {
             for (final estado in _estadosContagem)
-              estado: List.generate(
-                widget.rotulos.length,
-                (_) => TextEditingController(),
-              ),
+              estado: List.generate(widget.rotulos.length, (_) => TextEditingController()),
           }
         : {};
     _contagemSecundariosPorEstado = _ehContagemParticulas
         ? {
             for (final estado in _estadosContagem)
-              estado: List.generate(
-                widget.rotulos.length,
-                (_) => TextEditingController(),
-              ),
+              estado: List.generate(widget.rotulos.length, (_) => TextEditingController()),
           }
         : {};
     _controllersPrincipais = _ehContagemParticulas
@@ -143,25 +128,15 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
   }
 
   Future<void> _carregarPontosExistentes() async {
-    final pontos = await widget.dbHelper.getPontosLeituraPorSalaEEnsaio(
-      widget.sala.id,
-      widget.ensaio.tipo.name,
-    );
+    final pontos = await widget.dbHelper.getPontosLeituraPorSalaEEnsaio(widget.sala.id, widget.ensaio.tipo.name);
     if (!mounted || pontos.isEmpty) return;
     setState(() {
       for (final ponto in pontos) {
-        final indice =
-            (int.tryParse(ponto['numeroPonto']?.toString() ?? '') ?? 0) - 1;
+        final indice = (int.tryParse(ponto['numeroPonto']?.toString() ?? '') ?? 0) - 1;
         if (indice < 0 || indice >= _controllersPrincipais.length) continue;
-        final estado = _ehContagemParticulas
-            ? _normalizarEstado(ponto['estado'])
-            : _estadoContagem;
-        final principais = _ehContagemParticulas
-            ? _contagemPrincipaisPorEstado[estado]!
-            : _controllersPrincipais;
-        final secundarios = _ehContagemParticulas
-            ? _contagemSecundariosPorEstado[estado]!
-            : _controllersSecundarios;
+        final estado = _ehContagemParticulas ? _normalizarEstado(ponto['estado']) : _estadoContagem;
+        final principais = _ehContagemParticulas ? _contagemPrincipaisPorEstado[estado]! : _controllersPrincipais;
+        final secundarios = _ehContagemParticulas ? _contagemSecundariosPorEstado[estado]! : _controllersSecundarios;
         if (indice >= principais.length) continue;
         principais[indice].text = ponto['valor05um']?.toString() ?? '';
         if (_ehContagemParticulas && indice < secundarios.length) {
@@ -174,18 +149,11 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
   }
 
   Future<void> _carregarResultadoExistente() async {
-    final resultado = await widget.dbHelper.getResultadoEnsaio(
-      widget.sala.id,
-      widget.ensaio.tipo.name,
-    );
+    final resultado = await widget.dbHelper.getResultadoEnsaio(widget.sala.id, widget.ensaio.tipo.name);
     if (!mounted || resultado == null) return;
-    final dados = resultado['dados'] is Map
-        ? Map<String, dynamic>.from(resultado['dados'])
-        : const <String, dynamic>{};
+    final dados = resultado['dados'] is Map ? Map<String, dynamic>.from(resultado['dados']) : const <String, dynamic>{};
     setState(() {
-      if (resultado['conforme'] is bool) {
-        _conforme = resultado['conforme'] as bool;
-      }
+      if (resultado['conforme'] is bool) _conforme = resultado['conforme'] as bool;
       _observacoesController.text = resultado['observacoes']?.toString() ?? '';
       _frequenciaController.text = dados['frequencia']?.toString() ?? '';
       _concentracaoController.text = dados['concentracao']?.toString() ?? '';
@@ -194,8 +162,7 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
       if (_ehContagemParticulas) {
         _estadoContagem = _normalizarEstado(dados['estado']);
         _controllersPrincipais = _contagemPrincipaisPorEstado[_estadoContagem]!;
-        _controllersSecundarios =
-            _contagemSecundariosPorEstado[_estadoContagem]!;
+        _controllersSecundarios = _contagemSecundariosPorEstado[_estadoContagem]!;
       }
     });
   }
@@ -228,17 +195,10 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
 
   String _rotuloDoIndice(int index) => widget.rotulos[index];
 
-  String _normalizarEstado(dynamic estado) =>
-      _estadosContagem.contains(estado?.toString())
-      ? estado.toString()
-      : 'repouso';
+  String _normalizarEstado(dynamic estado) => _estadosContagem.contains(estado?.toString()) ? estado.toString() : 'repouso';
 
   void _selecionarEstadoContagem(String? estado) {
-    if (!_ehContagemParticulas ||
-        estado == null ||
-        !_estadosContagem.contains(estado)) {
-      return;
-    }
+    if (!_ehContagemParticulas || estado == null || !_estadosContagem.contains(estado)) return;
     setState(() {
       _estadoContagem = estado;
       _controllersPrincipais = _contagemPrincipaisPorEstado[estado]!;
@@ -258,10 +218,10 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
       final extensao = caminhoNormalizado.endsWith('.png')
           ? '.png'
           : caminhoNormalizado.endsWith('.webp')
-          ? '.webp'
-          : caminhoNormalizado.endsWith('.gif')
-          ? '.gif'
-          : '.jpg';
+              ? '.webp'
+              : caminhoNormalizado.endsWith('.gif')
+                  ? '.gif'
+                  : '.jpg';
       final caminhoStorage =
           'evidencias/${widget.projetoId}/${widget.sala.id}/${widget.ensaio.tipo.name}/'
           '${DateTime.now().millisecondsSinceEpoch}$extensao';
@@ -282,48 +242,25 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
   }
 
   bool get _todosCamposPreenchidos {
-    final listasPrincipais = _ehContagemParticulas
-        ? _contagemPrincipaisPorEstado.values
-        : [_controllersPrincipais];
-    final listasSecundarias = _ehContagemParticulas
-        ? _contagemSecundariosPorEstado.values
-        : [_controllersSecundarios];
-    final principaisOk = listasPrincipais.every(
-      (lista) => lista.every((controller) => controller.text.trim().isNotEmpty),
-    );
-    final secundariosOk =
-        !_ehContagemParticulas ||
-        listasSecundarias.every(
-          (lista) =>
-              lista.every((controller) => controller.text.trim().isNotEmpty),
-        );
-    final fotoOk =
-        !_exigeFotoEvidencia ||
-        (_fotoEvidenciaUrl != null && _fotoEvidenciaUrl!.isNotEmpty);
-    final ferramentasOk = widget.ensaio.ferramentasNecessarias.every(
-      (tipo) => (_instrumentosPorTipo[tipo]?.isNotEmpty ?? false),
-    );
+    final listasPrincipais = _ehContagemParticulas ? _contagemPrincipaisPorEstado.values : [_controllersPrincipais];
+    final listasSecundarias = _ehContagemParticulas ? _contagemSecundariosPorEstado.values : [_controllersSecundarios];
+    final principaisOk = listasPrincipais.every((lista) => lista.every((controller) => controller.text.trim().isNotEmpty));
+    final secundariosOk = !_ehContagemParticulas ||
+        listasSecundarias.every((lista) => lista.every((controller) => controller.text.trim().isNotEmpty));
+    final fotoOk = !_exigeFotoEvidencia || (_fotoEvidenciaUrl != null && _fotoEvidenciaUrl!.isNotEmpty);
+    final ferramentasOk =
+        widget.ensaio.ferramentasNecessarias.every((tipo) => (_instrumentosPorTipo[tipo]?.isNotEmpty ?? false));
     final validacao = _validarTodosPontos();
-    return principaisOk &&
-        secundariosOk &&
-        fotoOk &&
-        ferramentasOk &&
-        validacao.valido &&
+    return principaisOk && secundariosOk && fotoOk && ferramentasOk && validacao.valido &&
         (validacao.conforme != null || _conforme != null);
   }
 
   ResultadoValidacaoEnsaio _validarPontos() {
     return const ValidacaoEnsaioService().validarPontos(
       tipo: widget.ensaio.tipo,
-      valoresPrincipais: _controllersPrincipais.map(
-        (controller) => controller.text,
-      ),
-      valoresSecundarios: _controllersSecundarios.map(
-        (controller) => controller.text,
-      ),
-      configuracao:
-          widget.sala.configEnsaios[widget.ensaio.tipo.name] ??
-          const <String, dynamic>{},
+      valoresPrincipais: _controllersPrincipais.map((controller) => controller.text),
+      valoresSecundarios: _controllersSecundarios.map((controller) => controller.text),
+      configuracao: widget.sala.configEnsaios[widget.ensaio.tipo.name] ?? const <String, dynamic>{},
     );
   }
 
@@ -335,30 +272,20 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
     for (final estado in _estadosContagem) {
       final resultado = const ValidacaoEnsaioService().validarPontos(
         tipo: widget.ensaio.tipo,
-        valoresPrincipais: _contagemPrincipaisPorEstado[estado]!.map(
-          (controller) => controller.text,
-        ),
-        valoresSecundarios: _contagemSecundariosPorEstado[estado]!.map(
-          (controller) => controller.text,
-        ),
-        configuracao:
-            widget.sala.configEnsaios[widget.ensaio.tipo.name] ??
-            const <String, dynamic>{},
+        valoresPrincipais: _contagemPrincipaisPorEstado[estado]!.map((controller) => controller.text),
+        valoresSecundarios: _contagemSecundariosPorEstado[estado]!.map((controller) => controller.text),
+        configuracao: widget.sala.configEnsaios[widget.ensaio.tipo.name] ?? const <String, dynamic>{},
       );
       erros.addAll(resultado.erros.map((erro) => '$estado: $erro'));
       if (resultado.conforme != null) temCriterio = true;
       if (resultado.conforme == false) conforme = false;
     }
-    return ResultadoValidacaoEnsaio(
-      erros: erros,
-      conforme: temCriterio ? conforme : null,
-    );
+    return ResultadoValidacaoEnsaio(erros: erros, conforme: temCriterio ? conforme : null);
   }
 
   Map<String, dynamic> _dadosResultadoCalculado() {
     final dados = <String, dynamic>{
-      'criterio':
-          widget.sala.configEnsaios[widget.ensaio.tipo.name]?['criterio'] ?? '',
+      'criterio': widget.sala.configEnsaios[widget.ensaio.tipo.name]?['criterio'] ?? '',
       'frequencia': _frequenciaController.text.trim(),
       'concentracao': _concentracaoController.text.trim(),
       'vazaoCriterio': _vazaoCriterioController.text.trim(),
@@ -366,27 +293,19 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
       'estado': _estadoContagem,
     };
     final valores = _controllersPrincipais
-        .map(
-          (controller) =>
-              double.tryParse(controller.text.trim().replaceAll(',', '.')),
-        )
+        .map((controller) => double.tryParse(controller.text.trim().replaceAll(',', '.')))
         .whereType<double>()
         .toList();
-    if (widget.ensaio.tipo == TipoEnsaio.velocidadeFluxo &&
-        valores.isNotEmpty) {
+    if (widget.ensaio.tipo == TipoEnsaio.velocidadeFluxo && valores.isNotEmpty) {
       final media = valores.reduce((a, b) => a + b) / valores.length;
       final somaQuadrados = valores.fold<double>(0, (soma, valor) {
         final diferenca = valor - media;
         return soma + diferenca * diferenca;
       });
-      final desvioPadrao = valores.length > 1
-          ? math.sqrt(somaQuadrados / (valores.length - 1))
-          : 0;
+      final desvioPadrao = valores.length > 1 ? math.sqrt(somaQuadrados / (valores.length - 1)) : 0;
       dados['media'] = media;
       dados['desvioPadrao'] = desvioPadrao;
-      dados['desvioPadraoRelativo'] = media == 0
-          ? null
-          : desvioPadrao / media * 100;
+      dados['desvioPadraoRelativo'] = media == 0 ? null : desvioPadrao / media * 100;
     }
     return dados;
   }
@@ -395,40 +314,24 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
     if (indice >= widget.filtroIds.length) return '';
     final filtroId = widget.filtroIds[indice];
     if (filtroId == null || filtroId.isEmpty) return '';
-    return (widget.filtroIds
-            .sublist(0, indice + 1)
-            .where((id) => id == filtroId)
-            .length)
-        .toString();
+    return (widget.filtroIds.sublist(0, indice + 1).where((id) => id == filtroId).length).toString();
   }
 
   Future<void> _persistirPontos() async {
-    await widget.dbHelper.deletePontosLeituraPorSalaEEnsaio(
-      widget.sala.id,
-      widget.ensaio.tipo.name,
-    );
-    final estados = _ehContagemParticulas
-        ? _estadosContagem
-        : [_estadoContagem];
+    await widget.dbHelper.deletePontosLeituraPorSalaEEnsaio(widget.sala.id, widget.ensaio.tipo.name);
+    final estados = _ehContagemParticulas ? _estadosContagem : [_estadoContagem];
     for (final estado in estados) {
-      final principais = _ehContagemParticulas
-          ? _contagemPrincipaisPorEstado[estado]!
-          : _controllersPrincipais;
-      final secundarios = _ehContagemParticulas
-          ? _contagemSecundariosPorEstado[estado]!
-          : _controllersSecundarios;
+      final principais = _ehContagemParticulas ? _contagemPrincipaisPorEstado[estado]! : _controllersPrincipais;
+      final secundarios = _ehContagemParticulas ? _contagemSecundariosPorEstado[estado]! : _controllersSecundarios;
       for (var i = 0; i < principais.length; i++) {
         final sufixoEstado = _ehContagemParticulas ? '-$estado' : '';
         await widget.dbHelper.insertPontoLeitura({
-          'id':
-              'PONTO-${widget.sala.id}-${widget.ensaio.tipo.name}-$i$sufixoEstado',
+          'id': 'PONTO-${widget.sala.id}-${widget.ensaio.tipo.name}-$i$sufixoEstado',
           'projetoId': widget.projetoId,
           'salaId': widget.sala.id,
           'ensaioTipo': widget.ensaio.tipo.name,
           'numeroPonto': i + 1,
-          'filtroId': i < widget.filtroIds.length
-              ? (widget.filtroIds[i] ?? '')
-              : '',
+          'filtroId': i < widget.filtroIds.length ? (widget.filtroIds[i] ?? '') : '',
           'filtroIndice': _filtroIndice(i),
           'estado': estado,
           'valor05um': principais[i].text.trim(),
@@ -451,10 +354,7 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
         dados: _dadosResultadoCalculado(),
       ),
     );
-    await widget.projetoService.atualizarFerramentasEscaneadas(
-      widget.projetoId,
-      _instrumentosPorTipo,
-    );
+    await widget.projetoService.atualizarFerramentasEscaneadas(widget.projetoId, _instrumentosPorTipo);
     await widget.projetoService.sincronizarPontosLeitura(widget.projetoId);
   }
 
@@ -463,10 +363,7 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
     final validacao = _validarTodosPontos();
     if (!validacao.valido) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(validacao.erros.first),
-          backgroundColor: Colors.amber,
-        ),
+        SnackBar(content: Text(validacao.erros.first), backgroundColor: Colors.amber),
       );
       return;
     }
@@ -474,9 +371,7 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
     if (!_todosCamposPreenchidos) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text(
-            'Preencha todos os campos, escaneie as ferramentas, selecione a conformidade e anexe a foto exigida.',
-          ),
+          content: Text('Preencha todos os campos, escaneie as ferramentas, selecione a conformidade e anexe a foto exigida.'),
           backgroundColor: Colors.amber,
         ),
       );
@@ -487,32 +382,24 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
     await _persistirPontos();
 
     if (!mounted) return;
-    Navigator.of(
-      context,
-    ).pop(ResultadoExecucaoEnsaio(completo: true, dataFim: DateTime.now()));
+    Navigator.of(context).pop(ResultadoExecucaoEnsaio(completo: true, dataFim: DateTime.now()));
   }
 
   Future<void> _encerrarIncompleto() async {
     final liberacao = await solicitarLiberacaoSupervisor(
       context: context,
       titulo: 'Teste Incompleto',
-      mensagem:
-          'Nem todos os pontos de "${widget.ensaio.nome}" em "${widget.sala.nome}" foram preenchidos.\n\n'
+      mensagem: 'Nem todos os pontos de "${widget.ensaio.nome}" em "${widget.sala.nome}" foram preenchidos.\n\n'
           'Informe o código do autenticador do Supervisor para encerrar mesmo assim:',
       projetoId: widget.projetoId,
       salaId: widget.sala.id,
       ensaioTipo: widget.ensaio.tipo.name,
       ferramentaTipo: widget.ensaio.ferramentasNecessarias.join(', '),
       ferramentaTag: widget.ensaio.ferramentasNecessarias
-          .expand(
-            (tipo) =>
-                widget.ferramentasJaEscaneadas[tipo] ??
-                const <InstrumentoModel>[],
-          )
+          .expand((tipo) => widget.ferramentasJaEscaneadas[tipo] ?? const <InstrumentoModel>[])
           .map((instrumento) => instrumento.tag)
           .join(', '),
-      justificativa:
-          'Encerramento incompleto do ensaio ${widget.ensaio.tipo.name} na sala ${widget.sala.nome}.',
+      justificativa: 'Encerramento incompleto do ensaio ${widget.ensaio.tipo.name} na sala ${widget.sala.nome}.',
     );
     if (liberacao == null) return;
 
@@ -521,11 +408,7 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
 
     if (!mounted) return;
     Navigator.of(context).pop(
-      ResultadoExecucaoEnsaio(
-        completo: false,
-        dataFim: DateTime.now(),
-        liberacao: liberacao,
-      ),
+      ResultadoExecucaoEnsaio(completo: false, dataFim: DateTime.now(), liberacao: liberacao),
     );
   }
 
@@ -545,20 +428,12 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
             if (_ehRecuperacaoOuEnergia)
               Container(
                 padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.amber[50],
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: const Text(
-                  '⏱ O tempo de recuperação não pode ultrapassar 15 minutos.',
-                  style: TextStyle(fontWeight: FontWeight.bold),
-                ),
+                decoration: BoxDecoration(color: Colors.amber[50], borderRadius: BorderRadius.circular(8)),
+                child: const Text('⏱ O tempo de recuperação não pode ultrapassar 15 minutos.',
+                    style: TextStyle(fontWeight: FontWeight.bold)),
               ),
             const SizedBox(height: 16),
-            const Text(
-              'Ferramentas Necessárias',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
+            const Text('Ferramentas Necessárias', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ...widget.ensaio.ferramentasNecessarias.map((tipo) {
               final instrumentos = _instrumentosPorTipo[tipo] ?? const [];
               return Padding(
@@ -568,37 +443,17 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
                   children: [
                     Row(
                       children: [
-                        Expanded(
-                          child: Text(
-                            tipo,
-                            style: const TextStyle(fontWeight: FontWeight.w600),
-                          ),
-                        ),
+                        Expanded(child: Text(tipo, style: const TextStyle(fontWeight: FontWeight.w600))),
                         Icon(
-                          instrumentos.isEmpty
-                              ? Icons.error_outline
-                              : Icons.verified_outlined,
-                          color: instrumentos.isEmpty
-                              ? Colors.red
-                              : Colors.green,
+                          instrumentos.isEmpty ? Icons.error_outline : Icons.verified_outlined,
+                          color: instrumentos.isEmpty ? Colors.red : Colors.green,
                         ),
                       ],
                     ),
                     if (instrumentos.isEmpty)
-                      const Text(
-                        'Nenhum instrumento vinculado ainda.',
-                        style: TextStyle(color: Colors.grey),
-                      )
+                      const Text('Nenhum instrumento vinculado ainda.', style: TextStyle(color: Colors.grey))
                     else
-                      Wrap(
-                        spacing: 8,
-                        children: instrumentos
-                            .map(
-                              (instrumento) =>
-                                  Chip(label: Text(instrumento.tag)),
-                            )
-                            .toList(),
-                      ),
+                      Wrap(spacing: 8, children: instrumentos.map((instrumento) => Chip(label: Text(instrumento.tag))).toList()),
                   ],
                 ),
               );
@@ -610,10 +465,7 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
               items: const [
                 DropdownMenuItem<bool?>(value: null, child: Text('Selecione')),
                 DropdownMenuItem<bool?>(value: true, child: Text('Conforme')),
-                DropdownMenuItem<bool?>(
-                  value: false,
-                  child: Text('Não conforme'),
-                ),
+                DropdownMenuItem<bool?>(value: false, child: Text('Não conforme')),
               ],
               onChanged: (valor) => setState(() => _conforme = valor),
             ),
@@ -621,25 +473,19 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
             if (widget.ensaio.tipo == TipoEnsaio.velocidadeFluxo)
               TextField(
                 controller: _frequenciaController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(labelText: 'Frequência (Hz)'),
               ),
             if (widget.ensaio.tipo == TipoEnsaio.contagemParticulas) ...[
               TextField(
                 controller: _concentracaoController,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 decoration: const InputDecoration(labelText: 'Concentração'),
               ),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
                 initialValue: _estadoContagem,
-                decoration: const InputDecoration(
-                  labelText: 'Estado da contagem',
-                ),
+                decoration: const InputDecoration(labelText: 'Estado da contagem'),
                 items: const [
                   DropdownMenuItem(value: 'repouso', child: Text('Repouso')),
                   DropdownMenuItem(value: 'operacao', child: Text('Operação')),
@@ -647,28 +493,20 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
                 onChanged: _selecionarEstadoContagem,
               ),
             ],
-            if (widget.ensaio.tipo == TipoEnsaio.vazaoInsuflacao ||
-                widget.ensaio.tipo == TipoEnsaio.perdaCargaFiltros)
+            if (widget.ensaio.tipo == TipoEnsaio.vazaoInsuflacao || widget.ensaio.tipo == TipoEnsaio.perdaCargaFiltros)
               TextField(
                 controller: _vazaoCriterioController,
-                decoration: const InputDecoration(
-                  labelText: 'Vazão / critério',
-                ),
+                decoration: const InputDecoration(labelText: 'Vazão / critério'),
               ),
             if (widget.ensaio.tipo == TipoEnsaio.luminosidade)
               TextField(
                 controller: _lxController,
                 decoration: const InputDecoration(labelText: 'L/X'),
               ),
-            if ((widget.sala.configEnsaios[widget.ensaio.tipo.name]?['criterio']
-                        ?.toString() ??
-                    '')
-                .isNotEmpty)
+            if ((widget.sala.configEnsaios[widget.ensaio.tipo.name]?['criterio']?.toString() ?? '').isNotEmpty)
               Padding(
                 padding: const EdgeInsets.only(top: 8),
-                child: Text(
-                  'Critério configurado: ${widget.sala.configEnsaios[widget.ensaio.tipo.name]?['criterio']}',
-                ),
+                child: Text('Critério configurado: ${widget.sala.configEnsaios[widget.ensaio.tipo.name]?['criterio']}'),
               ),
             const SizedBox(height: 12),
             TextField(
@@ -678,10 +516,8 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
               decoration: const InputDecoration(labelText: 'Observações'),
             ),
             const SizedBox(height: 20),
-            Text(
-              _ehContagemParticulas ? 'Leituras (0,5 µm / 5 µm)' : 'Resultados',
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16),
-            ),
+            Text(_ehContagemParticulas ? 'Leituras (0,5 µm / 5 µm)' : 'Resultados',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
             ...List.generate(_controllersPrincipais.length, (i) {
               if (_ehContagemParticulas) {
                 return Padding(
@@ -691,21 +527,15 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
                       Expanded(
                         child: TextField(
                           controller: _controllersPrincipais[i],
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
-                          decoration: InputDecoration(
-                            labelText: '${_rotuloDoIndice(i)} — 0,5µm',
-                          ),
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: InputDecoration(labelText: '${_rotuloDoIndice(i)} — 0,5µm'),
                         ),
                       ),
                       const SizedBox(width: 12),
                       Expanded(
                         child: TextField(
                           controller: _controllersSecundarios[i],
-                          keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true,
-                          ),
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
                           decoration: const InputDecoration(labelText: '5µm'),
                         ),
                       ),
@@ -719,17 +549,16 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
                   controller: _controllersPrincipais[i],
                   keyboardType: _resultadoTextual
                       ? TextInputType.text
-                      : TextInputType.numberWithOptions(
-                          decimal: true,
-                          signed: _permiteValorNegativo,
-                        ),
+                      : TextInputType.numberWithOptions(decimal: true, signed: _permiteValorNegativo),
                   decoration: InputDecoration(
-                    labelText: _rotuloDoIndice(i),
+                    labelText: widget.ensaio.tipo == TipoEnsaio.paralelismoFluxo
+                        ? '${_rotuloDoIndice(i)} (°)'
+                        : _rotuloDoIndice(i),
                     helperText: _permiteValorNegativo
                         ? 'Use valor negativo se o fluxo estiver invertido'
                         : _resultadoTextual
-                        ? 'Ex.: Conforme / Não conforme'
-                        : null,
+                            ? 'Ex.: Conforme / Não conforme'
+                            : null,
                   ),
                 ),
               );
@@ -743,34 +572,21 @@ class _ExecucaoEnsaioPageState extends State<ExecucaoEnsaioPage> {
                   _enviandoFoto
                       ? 'Enviando foto...'
                       : _fotoEvidenciaUrl == null
-                      ? 'Anexar Foto de Evidência'
-                      : 'Foto Anexada ✓',
+                          ? 'Anexar Foto de Evidência'
+                          : 'Foto Anexada ✓',
                 ),
               ),
             ],
             const SizedBox(height: 28),
             ElevatedButton(
               onPressed: _salvando || _enviandoFoto ? null : _concluirEnsaio,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
-              child: const Text(
-                'Concluir Ensaio',
-                style: TextStyle(
-                  color: Colors.white,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+              style: ElevatedButton.styleFrom(backgroundColor: Colors.blue, padding: const EdgeInsets.symmetric(vertical: 16)),
+              child: const Text('Concluir Ensaio', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
             ),
             const SizedBox(height: 12),
             OutlinedButton(
-              onPressed: _salvando || _enviandoFoto
-                  ? null
-                  : _encerrarIncompleto,
-              style: OutlinedButton.styleFrom(
-                padding: const EdgeInsets.symmetric(vertical: 16),
-              ),
+              onPressed: _salvando || _enviandoFoto ? null : _encerrarIncompleto,
+              style: OutlinedButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 16)),
               child: const Text('Encerrar Incompleto (requer supervisor)'),
             ),
           ],

@@ -148,6 +148,16 @@ void main() {
       expect(resultado.valido, isTrue);
       expect(resultado.conforme, isNull);
     });
+
+    test('valida paralelismo como ângulo numérico', () {
+      final resultado = validador.validarPontos(
+        tipo: TipoEnsaio.paralelismoFluxo,
+        valoresPrincipais: ['3'],
+      );
+
+      expect(resultado.valido, isTrue);
+      expect(resultado.conforme, isNull);
+    });
   });
 
   group('Pontos exigidos por sala x ensaio', () {

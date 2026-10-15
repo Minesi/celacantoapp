@@ -303,10 +303,9 @@ void main() {
   testWidgets('Fluxo Laminar: executa os oito ensaios, aprova e emite DOCX', (
     tester,
   ) async {
-    final alvoDesktop =
-        defaultTargetPlatform == TargetPlatform.windows ||
-        defaultTargetPlatform == TargetPlatform.linux ||
-        defaultTargetPlatform == TargetPlatform.macOS;
+    final alvoDesktop = defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.linux ||
+      defaultTargetPlatform == TargetPlatform.macOS;
     if (!e2eAndroid && alvoDesktop) {
       await tester.binding.setSurfaceSize(const Size(1400, 2200));
       addTearDown(() => tester.binding.setSurfaceSize(null));
@@ -508,7 +507,7 @@ void main() {
       ('Integridade de Filtros', '0.006', 'Filtro 1 (H14)', false),
       ('Nível de Ruído', '60', 'Ponto 1', false),
       ('Luminosidade', '500', 'Ponto 1', false),
-      ('Paralelismo do Fluxo de Ar', 'Conforme', 'Ponto 1', true),
+      ('Paralelismo do Fluxo de Ar', '3', 'Ponto 1', true),
       (
         'Visualização do Fluxo de Ar',
         'Fluxo descendente conforme',
@@ -588,11 +587,13 @@ void main() {
         .map((ponto) => ponto['fotoEvidenciaUrl']?.toString() ?? '')
         .toSet();
     expect(
-      urlsEvidencias.every((url) {
-        final uri = Uri.tryParse(url);
-        return uri?.scheme == 'https' &&
-            uri?.host == 'firebasestorage.googleapis.com';
-      }),
+      urlsEvidencias.every(
+        (url) {
+          final uri = Uri.tryParse(url);
+          return uri?.scheme == 'https' &&
+              uri?.host == 'firebasestorage.googleapis.com';
+        },
+      ),
       isTrue,
       reason: 'Evidências precisam estar publicadas no Firebase Storage',
     );
@@ -777,7 +778,10 @@ void main() {
       '5',
       '6',
       'Conforme',
+      '3°',
       'Fluxo descendente conforme',
+      '0,46',
+      '0,006%',
     ]) {
       expect(
         texto,
@@ -806,6 +810,8 @@ void main() {
       isFalse,
       reason: 'DOCX com placeholder sem substituição',
     );
+    expect(texto, contains(projetoId));
+    expect(texto, isNot(contains('REGISTRO ESTRUTURADO DOS ENSAIOS')));
     anotar(
       'DOCX final contém os oito ensaios, instrumentos, sala, valores e estados da Contagem',
     );
