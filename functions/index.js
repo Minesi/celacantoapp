@@ -23,11 +23,13 @@ const { renderizarDocx } = require("./relatorio_docx");
 const { construirDocumento, extrairConclusao } = require("./relatorio_documento");
 const {
   condicoesDeEnsaios,
+  condicoesDePesagem,
   instrumentosUtilizados,
   normalizarTagsTemplate,
   placeholdersDeResultados,
 } = require("./modelo_cliente");
 const { enviarRelatorioEmail, REMETENTE_PADRAO } = require("./email_service");
+const { perfilDoClaim } = require("./perfil_claims");
 
 initializeApp();
 
@@ -83,6 +85,19 @@ exports.cadastrarUsuario = functions.runWith({ invoker: "public" }).https.onCall
     console.error("Falha ao cadastrar usuário:", erro);
     throw new functions.https.HttpsError("internal", "Não foi possível cadastrar o usuário.");
   }
+});
+
+exports.sincronizarPerfilClaim = functions.region("southamerica-east1").firestore.document("usuarios/{uid}").onWrite(async (change, context) => {
+  const perfil = change.after.exists ? perfilDoClaim(change.after.data()) : null;
+  await getAuth().setCustomUserClaims(context.params.uid, perfil ? { perfil } : null);
+});
+
+exports.atualizarMeuPerfilClaim = functions.runWith({ invoker: "public" }).https.onCall(async (_data, context) => {
+  if (!context.auth) throw new functions.https.HttpsError("unauthenticated", "Autenticacao necessaria.");
+  const documento = await getFirestore().collection("usuarios").doc(context.auth.uid).get();
+  const perfil = documento.exists ? perfilDoClaim(documento.data()) : null;
+  await getAuth().setCustomUserClaims(context.auth.uid, perfil ? { perfil } : null);
+  return { perfil };
 });
 
 exports.excluirMinhaConta = functions.runWith({ invoker: "public" }).https.onCall(async (_data, context) => {
@@ -497,6 +512,16 @@ async function nomeDoUsuario(email) {
   return snapshot.empty ? email : (snapshot.docs[0].data().nome || email);
 }
 
+async function listarParticipantes(emails, elaboradorEmail, empresa) {
+  const elaborador = String(elaboradorEmail || '').trim().toLowerCase();
+  const unicos = [...new Set(emails.map((email) => String(email || '').trim().toLowerCase()).filter(Boolean))];
+  return Promise.all(unicos.map(async (email) => ({
+    nome: await nomeDoUsuario(email),
+    cargo: email === elaborador ? 'Elaborador' : 'Técnico',
+    empresa: empresa || '',
+  })));
+}
+
 async function montarDadosMerge(projeto) {
   const historico = Array.isArray(projeto.history) ? projeto.history : [];
   const usuarioDoHistorico = (valorNovo) => historico.find((entrada) => entrada.valorNovo === valorNovo)?.usuario || "";
@@ -543,10 +568,17 @@ async function montarDadosMerge(projeto) {
     instrumentosUtilizados: instrumentos,
   };
 
+  dados.participantes = await listarParticipantes(
+    [elaborador, tecnico, ...resultadosEnsaios.map((resultado) => resultado.tecnicoEmail)],
+    elaborador,
+    dados.EMPRESA,
+  );
   aplicarPlaceholdersDeInstrumentos(dados, instrumentos);
   aplicarPlaceholdersDeInstrumentosPorEnsaio(dados, instrumentos);
   aplicarPlaceholdersDeLeituras(dados, projeto.leiturasOcr || [], projeto.tipoProjeto || "");
-  Object.assign(dados, condicoesDeEnsaios(projeto));
+  Object.assign(dados, templateIdParaProjeto(projeto.tipoProjeto) === "pesagem"
+    ? condicoesDePesagem(projeto)
+    : condicoesDeEnsaios(projeto));
   aplicarPlaceholdersDeEnsaios(dados, projeto, {
     salas,
     handlingUnits,
@@ -942,6 +974,7 @@ function aplicarPlaceholdersDeEnsaios(dados, projeto, contexto) {
     pontosLeitura,
     resultadosEnsaios,
     paralelismo,
+    salas,
   }));
   const valoresVelocidade = resultadosPorTipo("velocidadeFluxo").map((resultado) => {
     const resultadoDados = resultado.dados || {};

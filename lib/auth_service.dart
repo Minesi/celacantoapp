@@ -57,6 +57,7 @@ class AuthService {
       );
 
       if (userCredential.user != null) {
+        await _sincronizarPerfilClaim();
         return await _buscarPerfilDoFirestore(userCredential.user!.uid);
       }
     } on FirebaseAuthException catch (e) {
@@ -72,6 +73,15 @@ class AuthService {
       debugPrint('Falha de login (erro inesperado): $e');
     }
     return null;
+  }
+
+  /// Registra o claim 'perfil' no servidor; falha não impede o login.
+  Future<void> _sincronizarPerfilClaim() async {
+    try {
+      await chamarCallable('atualizarMeuPerfilClaim', {});
+    } catch (e) {
+      debugPrint('Falha ao sincronizar perfil no token: $e');
+    }
   }
 
   /// Método auxiliar interno para buscar o perfil no Firestore (usa cache se offline)

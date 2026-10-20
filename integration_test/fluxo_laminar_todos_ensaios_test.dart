@@ -79,6 +79,16 @@ void main() {
     }
   }
 
+  Future<void> aguardarSincronizacao(WidgetTester tester) async {
+    final limite = DateTime.now().add(const Duration(minutes: 3));
+    while (DateTime.now().isBefore(limite)) {
+      await Future<void>.delayed(const Duration(milliseconds: 300));
+      await tester.pump();
+      if (find.textContaining('Sincronizando').evaluate().isEmpty) return;
+    }
+    throw TestFailure('Sincronização de projetos não terminou');
+  }
+
   Future<void> tocar(WidgetTester tester, Finder finder) async {
     await waitFor(tester, finder);
     await tester.ensureVisible(finder);
@@ -176,10 +186,13 @@ void main() {
 
   String textoDoDocx(File arquivo) {
     final zip = ZipDecoder().decodeBytes(arquivo.readAsBytesSync());
-    final documento = zip.findFile('word/document.xml');
-    expect(documento, isNotNull, reason: 'DOCX sem word/document.xml');
-    final xml = utf8.decode(documento!.content as List<int>);
-    return xml.replaceAll(RegExp(r'<[^>]+>'), ' ');
+    final partes = zip.files
+        .where((item) => RegExp(r'^word/(document|header\d+|footer\d+)\.xml$').hasMatch(item.name))
+        .toList();
+    expect(partes, isNotEmpty, reason: 'DOCX sem word/document.xml');
+    return partes
+        .map((item) => utf8.decode(item.content as List<int>).replaceAll(RegExp(r'<[^>]+>'), ' '))
+        .join(' ');
   }
 
   Future<void> selecionarConforme(WidgetTester tester) async {
@@ -536,7 +549,7 @@ void main() {
     await anexarFoto(tester);
     await escolherNoDropdown(
       tester,
-      dropdownComRotulo('Estado da contagem'),
+      dropdownComRotulo('Estado da medição'),
       'Operação',
     );
     await preencherResultado(tester, '0,5µm', '120');
@@ -608,6 +621,7 @@ void main() {
     await waitFor(tester, find.text('Projetos Realizados'));
     await tocar(tester, find.text('Projetos Realizados'));
     await waitFor(tester, find.widgetWithText(TextField, 'Área'));
+    await aguardarSincronizacao(tester);
     await tester.enterText(find.widgetWithText(TextField, 'Área'), areaTeste);
     await waitFor(tester, find.byIcon(Icons.task_alt));
     await tocar(tester, find.byIcon(Icons.task_alt));

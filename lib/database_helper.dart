@@ -581,6 +581,10 @@ class DatabaseHelper implements ExecucaoDatabase {
   // salas/handling units/filtros aninhados nas tabelas normalizadas correspondentes.
   Future<void> insertProjetoSincronizado(Map<String, dynamic> projeto) async {
     final db = await database;
+    await db.transaction((txn) => _gravarProjetoSincronizado(txn, projeto));
+  }
+
+  Future<void> _gravarProjetoSincronizado(DatabaseExecutor db, Map<String, dynamic> projeto) async {
     final projetoId = projeto['id'].toString();
 
     final mapaPersistido = Map<String, dynamic>.from(projeto)
@@ -600,9 +604,10 @@ class DatabaseHelper implements ExecucaoDatabase {
     await substituirSalasDoProjeto(
       projetoId,
       (projeto['salas'] as List? ?? const []).map((s) => Map<String, dynamic>.from(s)).toList(),
+      executor: db,
     );
 
-    await deleteHandlingUnitsPorProjeto(projetoId);
+    await deleteHandlingUnitsPorProjeto(projetoId, executor: db);
     for (final handlingUnit in (projeto['handlingUnits'] as List? ?? const [])) {
       final huMap = Map<String, dynamic>.from(handlingUnit);
       final filtros = (huMap.remove('filtros') as List? ?? const []);
@@ -614,20 +619,20 @@ class DatabaseHelper implements ExecucaoDatabase {
         'numero': huMap['numero'] ?? '',
         'temFiltroTerminal': huMap['temFiltroTerminal'] == true ? 1 : 0,
         'qtdFiltrosTerminais': huMap['qtdFiltrosTerminais'],
-      });
-      await deleteFiltrosPorHandlingUnit(huId);
+      }, executor: db);
+      await deleteFiltrosPorHandlingUnit(huId, executor: db);
       for (final filtro in filtros) {
         final filtroMap = Map<String, dynamic>.from(filtro);
-        await insertFiltro({...filtroMap, 'handlingUnitId': huId});
+        await insertFiltro({...filtroMap, 'handlingUnitId': huId}, executor: db);
       }
     }
 
     // Só acrescenta/atualiza (IDs determinísticos): nunca apaga pontos locais ainda não enviados.
     for (final ponto in (projeto['pontosLeitura'] as List? ?? const [])) {
-      await insertPontoLeitura({...Map<String, dynamic>.from(ponto), 'projetoId': projetoId});
+      await insertPontoLeitura({...Map<String, dynamic>.from(ponto), 'projetoId': projetoId}, executor: db);
     }
     for (final resultado in (projeto['resultadosEnsaios'] as List? ?? const [])) {
-      await inserirResultadoEnsaio({...Map<String, dynamic>.from(resultado), 'projetoId': projetoId});
+      await inserirResultadoEnsaio({...Map<String, dynamic>.from(resultado), 'projetoId': projetoId}, executor: db);
     }
   }
 
@@ -760,8 +765,8 @@ class DatabaseHelper implements ExecucaoDatabase {
   }
 
   // --- MÉTODOS GERENCIAIS DE SALAS ---
-  Future<int> insertSala(Map<String, dynamic> sala) async {
-    final db = await database;
+  Future<int> insertSala(Map<String, dynamic> sala, {DatabaseExecutor? executor}) async {
+    final db = executor ?? await database;
     return await db.insert('salas', sala, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -770,8 +775,8 @@ class DatabaseHelper implements ExecucaoDatabase {
     return await db.query('salas', where: 'projetoId = ?', whereArgs: [projetoId]);
   }
 
-  Future<int> deleteSalasPorProjeto(String projetoId) async {
-    final db = await database;
+  Future<int> deleteSalasPorProjeto(String projetoId, {DatabaseExecutor? executor}) async {
+    final db = executor ?? await database;
     return await db.delete('salas', where: 'projetoId = ?', whereArgs: [projetoId]);
   }
 
@@ -810,14 +815,18 @@ class DatabaseHelper implements ExecucaoDatabase {
   }
 
   /// Regrava as salas do projeto e suas saídas (filtros) a partir de mapas no formato SalaModel.toMap().
-  Future<void> substituirSalasDoProjeto(String projetoId, List<Map<String, dynamic>> salas) async {
-    final db = await database;
+  Future<void> substituirSalasDoProjeto(
+    String projetoId,
+    List<Map<String, dynamic>> salas, {
+    DatabaseExecutor? executor,
+  }) async {
+    final db = executor ?? await database;
     await db.delete(
       'filtros',
       where: 'salaId IN (SELECT id FROM salas WHERE projetoId = ?)',
       whereArgs: [projetoId],
     );
-    await deleteSalasPorProjeto(projetoId);
+    await deleteSalasPorProjeto(projetoId, executor: db);
 
     for (final sala in salas) {
       final salaMap = Map<String, dynamic>.from(sala);
@@ -828,16 +837,16 @@ class DatabaseHelper implements ExecucaoDatabase {
         'projetoId': projetoId,
         'handlingUnitIdsAdicionais': jsonEncode(salaMap['handlingUnitIdsAdicionais'] ?? const []),
         'configEnsaios': jsonEncode(salaMap['configEnsaios'] ?? const {}),
-      });
+      }, executor: db);
       for (final filtro in filtros) {
-        await insertFiltro({...Map<String, dynamic>.from(filtro), 'salaId': salaId});
+        await insertFiltro({...Map<String, dynamic>.from(filtro), 'salaId': salaId}, executor: db);
       }
     }
   }
 
   // --- MÉTODOS GERENCIAIS DE HANDLING UNITS ---
-  Future<int> insertHandlingUnit(Map<String, dynamic> handlingUnit) async {
-    final db = await database;
+  Future<int> insertHandlingUnit(Map<String, dynamic> handlingUnit, {DatabaseExecutor? executor}) async {
+    final db = executor ?? await database;
     return await db.insert('handling_units', handlingUnit, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -846,14 +855,14 @@ class DatabaseHelper implements ExecucaoDatabase {
     return await db.query('handling_units', where: 'projetoId = ?', whereArgs: [projetoId]);
   }
 
-  Future<int> deleteHandlingUnitsPorProjeto(String projetoId) async {
-    final db = await database;
+  Future<int> deleteHandlingUnitsPorProjeto(String projetoId, {DatabaseExecutor? executor}) async {
+    final db = executor ?? await database;
     return await db.delete('handling_units', where: 'projetoId = ?', whereArgs: [projetoId]);
   }
 
   // --- MÉTODOS GERENCIAIS DE FILTROS ---
-  Future<int> insertFiltro(Map<String, dynamic> filtro) async {
-    final db = await database;
+  Future<int> insertFiltro(Map<String, dynamic> filtro, {DatabaseExecutor? executor}) async {
+    final db = executor ?? await database;
     return await db.insert('filtros', filtro, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -862,8 +871,8 @@ class DatabaseHelper implements ExecucaoDatabase {
     return await db.query('filtros', where: 'handlingUnitId = ?', whereArgs: [handlingUnitId]);
   }
 
-  Future<int> deleteFiltrosPorHandlingUnit(String handlingUnitId) async {
-    final db = await database;
+  Future<int> deleteFiltrosPorHandlingUnit(String handlingUnitId, {DatabaseExecutor? executor}) async {
+    final db = executor ?? await database;
     return await db.delete('filtros', where: 'handlingUnitId = ?', whereArgs: [handlingUnitId]);
   }
 
@@ -906,8 +915,8 @@ class DatabaseHelper implements ExecucaoDatabase {
 
   // --- MÉTODOS GERENCIAIS DE PONTOS DE LEITURA ---
   @override
-  Future<int> insertPontoLeitura(Map<String, dynamic> ponto) async {
-    final db = await database;
+  Future<int> insertPontoLeitura(Map<String, dynamic> ponto, {DatabaseExecutor? executor}) async {
+    final db = executor ?? await database;
     return await db.insert('pontos_leitura', ponto, conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
@@ -936,8 +945,8 @@ class DatabaseHelper implements ExecucaoDatabase {
     );
   }
 
-  Future<int> inserirResultadoEnsaio(Map<String, dynamic> resultado) async {
-    final db = await database;
+  Future<int> inserirResultadoEnsaio(Map<String, dynamic> resultado, {DatabaseExecutor? executor}) async {
+    final db = executor ?? await database;
     final mapa = Map<String, dynamic>.from(resultado)
       ..['dataHora'] = resultado['dataHora'] is Timestamp
           ? (resultado['dataHora'] as Timestamp).toDate().toIso8601String()

@@ -46,6 +46,8 @@ class _CampoRelatorioPageState extends State<CampoRelatorioPage> {
   final NormaCalculoService _normaCalculoService = NormaCalculoService();
 
   bool _carregando = true;
+  bool _sincronizando = false;
+  (int, int) _progressoSincronizacao = (0, 0);
   List<Map<String, dynamic>> _projetos = [];
   Map<String, String> _nomeEmpresaPorCnpj = {};
   FiltroProjetos _filtro = const FiltroProjetos();
@@ -69,11 +71,42 @@ class _CampoRelatorioPageState extends State<CampoRelatorioPage> {
 
   String get _dominio => _authService.extrairDominio(widget.emailLogado);
 
+  Widget _barraSincronizacao() {
+    final (atual, total) = _progressoSincronizacao;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LinearProgressIndicator(value: total == 0 ? null : atual / total),
+          const SizedBox(height: 4),
+          Text(
+            total == 0 ? 'Sincronizando projetos...' : 'Sincronizando $atual de $total projetos',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _carregarProjetos() async {
     setState(() => _carregando = true);
     try {
+      final locais = await _projetoService.listarLocais();
+      if (!mounted) return;
+      setState(() {
+        _projetos = locais;
+        _carregando = false;
+        _sincronizando = true;
+      });
+
       final empresas = await _empresaService.listarPorDominio(_dominio);
-      final projetos = await _projetoService.listarPorDominio(_dominio);
+      final projetos = await _projetoService.sincronizarDominio(
+        _dominio,
+        onProgresso: (atual, total) {
+          if (mounted) setState(() => _progressoSincronizacao = (atual, total));
+        },
+      );
 
       if (!mounted) return;
       setState(() {
@@ -83,11 +116,14 @@ class _CampoRelatorioPageState extends State<CampoRelatorioPage> {
                 (e['nomeFantasia']?.toString() ?? ''),
         };
         _projetos = projetos;
-        _carregando = false;
+        _sincronizando = false;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _carregando = false);
+      setState(() {
+        _carregando = false;
+        _sincronizando = false;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('Erro ao carregar projetos: $e'),
@@ -182,8 +218,12 @@ class _CampoRelatorioPageState extends State<CampoRelatorioPage> {
     });
   }
 
-  int _pontosExigidos(SalaModel sala, TipoEnsaio tipo) =>
-      _normaCalculoService.pontosExigidosParaExecucao(sala, tipo);
+  int _pontosExigidos(SalaModel sala, TipoEnsaio tipo) {
+    final base = _normaCalculoService.pontosExigidosParaExecucao(sala, tipo);
+    final ruidoEmDoisEstados = tipo == TipoEnsaio.nivelRuido &&
+        _projetoSelecionado?['tipoProjeto']?.toString() == EnsaioModel.tipoPesagem;
+    return ruidoEmDoisEstados ? base * 2 : base;
+  }
 
   bool _ensaioCompleto(SalaModel sala, TipoEnsaio tipo) {
     final chave = '${sala.id}|${tipo.name}';
@@ -245,6 +285,8 @@ class _CampoRelatorioPageState extends State<CampoRelatorioPage> {
           sala: sala,
           ensaio: ensaio,
           dominio: _dominio,
+          tipoProjeto: _projetoSelecionado!['tipoProjeto']?.toString() ?? '',
+          dimensoesPorPonto: _normaCalculoService.filtrosDosPontos(sala, tipo).map((f) => f?.dimensoes ?? '').toList(),
           rotulos: _normaCalculoService.rotulosDosPontos(sala, tipo),
           filtroIds: _normaCalculoService
               .filtrosDosPontos(sala, tipo)
@@ -428,7 +470,12 @@ class _CampoRelatorioPageState extends State<CampoRelatorioPage> {
       body: _carregando
           ? const Center(child: CircularProgressIndicator())
           : _projetoSelecionado == null
-          ? _buildListaProjetos()
+          ? Column(
+              children: [
+                if (_sincronizando) _barraSincronizacao(),
+                Expanded(child: _buildListaProjetos()),
+              ],
+            )
           : _buildExecucaoProjeto(),
     );
   }

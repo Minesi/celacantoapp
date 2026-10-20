@@ -6,6 +6,7 @@ const PizZip = require("pizzip");
 const Docxtemplater = require("docxtemplater");
 const {
   condicoesDeEnsaios,
+  condicoesDePesagem,
   instrumentosUtilizados,
   normalizarTagsTemplate,
   placeholdersDeResultados,
@@ -29,6 +30,68 @@ test("numera em sequência somente os anexos visíveis", () => {
   assert.equal(condicoes.anexo_calibracao, "2");
   assert.equal(condicoes.anexo_assinaturas, "3");
   assert.equal(condicoes.anexo_conclusao, "4");
+});
+
+function renderizarPesagem(projeto) {
+  const zip = new PizZip(fs.readFileSync(path.join(__dirname, "templates", "pesagem.docx")));
+  normalizarTagsTemplate(zip);
+  const doc = new Docxtemplater(zip, { paragraphLoop: true, linebreaks: true, nullGetter: () => "" });
+  doc.render({ "NOME DO CLIENTE": "CLIENTE", ...condicoesDePesagem(projeto) });
+  const xml = doc.getZip().file("word/document.xml").asText();
+  return xml.replace(/<[^>]+>/g, "");
+}
+
+test("pesagem mostra somente os anexos dos ensaios selecionados e renumera", () => {
+  const texto = renderizarPesagem({ ensaiosSelecionados: ["integridadeFiltros", "contagemParticulas"] });
+  assert.match(texto, /ANEXO 1 - INTEGRIDADE E ESTANQUEIDADE/);
+  assert.match(texto, /ANEXO 2 - ENSAIO DE CONTAGEM/);
+  assert.match(texto, /Anexo 3 – Verificação da Calibração/);
+  assert.doesNotMatch(texto, /AVALIAÇÃO DO SISTEMA DE FILTRAGEM/);
+  assert.doesNotMatch(texto, /VELOCIDADE E UNIFORMIDADE/);
+  assert.doesNotMatch(texto, /Avaliação do Sistema de Filtragem/);
+  assert.match(texto, /Contagem de Partículas Não Viáveis “Em repouso”/);
+  assert.match(texto, /Integridade e Estanqueidade dos Filtros HEPA/);
+  assert.doesNotMatch(texto, /Visualização do Fluxo de Ar/);
+});
+
+test("tabela de testes segue a ordem dos anexos e inclui visualização quando selecionada", () => {
+  const texto = renderizarPesagem({ ensaiosSelecionados: ["nivelRuido", "luminosidade", "visualizacaoFluxo"] });
+  const posicao = (trecho) => texto.indexOf(trecho);
+  assert.ok(posicao("Nível de Ruído") >= 0);
+  assert.ok(posicao("Nível de Ruído") < posicao("Luminosidade"));
+  assert.match(texto, /Visualização do Fluxo de Ar/);
+  assert.ok(posicao("Visualização do Fluxo de Ar") < posicao("VISUALIZAÇÃO DO FLUXO DE AR"));
+});
+
+test("contagem usa limite por estado da elaboração e cai no padrão do Grau C", () => {
+  const salas = [{
+    id: "S1",
+    nome: "SALA",
+    area: 10,
+    grau: "c",
+    configEnsaios: { contagemParticulas: { criterioMax_repouso: "100000", criterioMax_operacao: "" } },
+  }];
+  const saida = placeholdersDeResultados({ pontosLeitura: [], resultadosEnsaios: [], salas });
+  const [repouso, operacao] = saida.contagemLinhas;
+  assert.equal(repouso.criterio05, "100000");
+  assert.equal(repouso.criterio5, "2900");
+  assert.equal(operacao.criterio05, "3520000");
+  assert.equal(operacao.criterio5, "29000");
+});
+
+test("pesagem mostra paralelismo com resultado mesmo sem ensaio selecionado", () => {
+  const condicoes = condicoesDePesagem({ ensaiosSelecionados: [], paralelismo: { resultado: "3°" } });
+  assert.equal(condicoes.ens_paralelismo, true);
+  assert.equal(condicoes.anexo_paralelismo, "1");
+});
+
+test("pesagem sem ensaios selecionados mantem somente calibracao, registro e conclusao", () => {
+  const texto = renderizarPesagem({ ensaiosSelecionados: [] });
+  assert.doesNotMatch(texto, /ANEXO \d/);
+  assert.match(texto, /Anexo 1 – Verificação da Calibração/);
+  assert.match(texto, /Anexo 2 - Registro de Assinaturas/);
+  assert.doesNotMatch(texto, /Visualização do Fluxo de Ar/);
+  assert.match(texto, /Anexo 3 - Conclusão/);
 });
 
 test("mapeia todos os ensaios do Fluxo Laminar para suas seções", () => {
@@ -258,4 +321,216 @@ test("modelo Fluxo Laminar restringe as tags do primeiro anexo ao ensaio de aval
   assert.match(textoDosParagrafos, /\{CERTIFICADO DE CALIBRAÇÃO_AVALIACAO\}/);
   assert.equal(textoDosParagrafos.includes("{TAG INSTRUMENTO}"), false);
   assert.equal(textoDosParagrafos.includes("{CERTIFICADO DE CALIBRAÇÃO}"), false);
+});
+
+test("placeholders do Pesagem separam o ruído por estado e calculam vazão e integridade", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [
+      { ensaioTipo: "nivelRuido", numeroPonto: 1, estado: "repouso", valor05um: "70" },
+      { ensaioTipo: "nivelRuido", numeroPonto: 1, estado: "operacao", valor05um: "72" },
+      { ensaioTipo: "integridadeFiltros", numeroPonto: 1, valor05um: "0.005" },
+    ],
+    resultadosEnsaios: [
+      { ensaioTipo: "velocidadeFluxo", dados: { vazaoPorFiltro: [{ mediaMs: 0.46, areaM2: 0.9125, vazaoM3h: 1511.1 }] } },
+      {
+        ensaioTipo: "integridadeFiltros",
+        dados: {
+          integridade: {
+            parcial: { assentamento: true, estrutura: false, meioFiltrante: true },
+            acoesCorretivas: ["Troca do filtro"],
+            reparoX: "120",
+            novoEnsaioConforme: true,
+          },
+        },
+      },
+      { ensaioTipo: "visualizacaoFluxo", conforme: true, dados: { verificacoesVisualizacao: [true, true], tempoDissipacao: "12" } },
+      { ensaioTipo: "paralelismoFluxo", dados: { paralelismo: [{ numeroPonto: 1, distanciaL: "900", distanciaX: "225" }] } },
+    ],
+  });
+
+  assert.equal(dados.res_ruido_rep_1, "70");
+  assert.equal(dados.res_ruido_op_1, "72");
+  assert.equal(dados.media_ruido_op, "72");
+  assert.equal(dados.media_f_1, "0,46");
+  assert.equal(dados.area_f_1, "0,9125");
+  assert.equal(dados.vaz_f_1, "1.511,1");
+  assert.equal(dados.vaz_f_2, "-");
+  assert.equal(dados.int_resultado_1, "Conforme");
+  assert.equal(dados.int_parcial_estrutura, "Não conforme");
+  assert.equal(dados.int_acao_troca, "X");
+  assert.equal(dados.int_acao_aperto, "");
+  assert.equal(dados.int_reparo_x, "120");
+  assert.equal(dados.int_novo_ensaio, "Conforme");
+  assert.equal(dados.vis_1, "Conforme");
+  assert.equal(dados.vis_tempo, "12");
+  assert.equal(dados.vis_resultado, "Conforme");
+  assert.equal(dados.par_L_1, "900");
+  assert.equal(dados.par_X_1, "225");
+});
+
+test("data de execução do Pesagem usa o fuso de São Paulo", () => {
+  const dados = placeholdersDeResultados({
+    resultadosEnsaios: [{ ensaioTipo: "velocidadeFluxo", dataHora: "2026-10-07T02:30:00Z" }],
+  });
+  assert.equal(dados["DATA EXECUCAO VELOCIDADE"], "06/10/2026");
+  assert.equal(dados["DATA EXECUCAO RUIDO"], "-");
+});
+
+test("avaliação da Pesagem gera uma linha por unidade de filtro com perda e resultado", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [
+      { ensaioTipo: "avaliacaoFiltragem", numeroPonto: 1, valor05um: "120" },
+      { ensaioTipo: "avaliacaoFiltragem", numeroPonto: 2, valor05um: "600" },
+    ],
+    salas: [{ filtros: [{ tipo: "H14", quantidade: 2, modelo: "M-1", dimensoes: "1250 x 730" }] }],
+  });
+  assert.deepEqual(dados.avaliacaoFiltros, [
+    { tipo: "H14", modelo: "M-1", dimensoes: "1250 x 730", quantidade: "1", criterio: "\u2264 500", perda: "120", resultado: "Conforme" },
+    { tipo: "H14", modelo: "M-1", dimensoes: "1250 x 730", quantidade: "1", criterio: "\u2264 500", perda: "600", resultado: "N\u00e3o conforme" },
+  ]);
+});
+
+test("integridade da Pesagem lista cada filtro com sala e resultado", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [{ ensaioTipo: "integridadeFiltros", numeroPonto: 1, valor05um: "0.005" }],
+    salas: [{ nome: "Sala 210", filtros: [{ tipo: "H14", quantidade: 1, dimensoes: "1250 x 730" }] }],
+  });
+  assert.deepEqual(dados.integridadeFiltros, [
+    { sala: "Sala 210", numero: "1", dimensoes: "1250 x 730", concentracaoGerada: "-", criterio: "< 0,01%", valor: "0.005", resultado: "Conforme" },
+  ]);
+});
+
+test("velocidade da Pesagem calcula média, área e vazão por filtro", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [
+      { ensaioTipo: "velocidadeFluxo", numeroPonto: 1, valor05um: "0.46" },
+      { ensaioTipo: "velocidadeFluxo", numeroPonto: 2, valor05um: "0.46" },
+      { ensaioTipo: "velocidadeFluxo", numeroPonto: 3, valor05um: "0.46" },
+      { ensaioTipo: "velocidadeFluxo", numeroPonto: 4, valor05um: "0.46" },
+    ],
+    salas: [{ nome: "Sala 210", filtros: [{ tipo: "H14", quantidade: 2, dimensoes: "1250 x 730" }] }],
+  });
+  assert.deepEqual(dados.velocidadeFiltros[0], {
+    filtro: "H14",
+    pontos: [
+      { ponto: "Ponto 1", valor: "0,46" },
+      { ponto: "Ponto 2", valor: "0,46" },
+    ],
+    mediaEsperada: "-",
+    mediaMs: "0,46",
+    criterioDesvio: "\u2264 15%",
+    desvioCalculado: "0",
+    area: "0,9125",
+    vazao: "1.511,1",
+    criterio: "0,36 a 0,54",
+    resultado: "Conforme",
+  });
+  assert.equal(dados.velocidadeFiltros.length, 2);
+});
+
+test("pontos da velocidade usam a localização digitada pelo elaborador", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [
+      { ensaioTipo: "velocidadeFluxo", numeroPonto: 1, valor05um: "0.46" },
+      { ensaioTipo: "velocidadeFluxo", numeroPonto: 2, valor05um: "0.44" },
+    ],
+    salas: [{
+      nome: "Sala 210",
+      configEnsaios: { velocidadeFluxo: { localizacoes: "P1 (centro), P2 (borda)" } },
+      filtros: [{ tipo: "H14", quantidade: 1, dimensoes: "1250 x 730" }],
+    }],
+  });
+  assert.deepEqual(dados.velocidadeFiltros[0].pontos.map((p) => p.ponto), ["P1 (centro)", "P2 (borda)"]);
+});
+
+test("contagem da Pesagem separa repouso e operação com limites do Grau C", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [
+      { ensaioTipo: "contagemParticulas", numeroPonto: 1, estado: "repouso", valor05um: "100", valor5um: "5", salaId: "S1" },
+      { ensaioTipo: "contagemParticulas", numeroPonto: 1, estado: "operacao", valor05um: "4000000", valor5um: "30000", salaId: "S1" },
+    ],
+    salas: [{ id: "S1", nome: "Sala 210", area: 0.79, grau: "C" }],
+  });
+  assert.equal(dados.criterio_rep_05, "352000");
+  assert.equal(dados.criterio_op_5, "29000");
+  assert.equal(dados.resultado_cont_rep, "Conforme");
+  assert.equal(dados.resultado_cont_op, "Não conforme");
+  assert.equal(dados.area_contagem, "0,79");
+  assert.equal(dados.grau_contagem, "C");
+});
+
+test("visualização da Pesagem usa fumaça e sentido padrão quando não configurados", () => {
+  const dados = placeholdersDeResultados({ salas: [{ id: "S1" }] });
+  assert.equal(dados.tipo_fumaca, "Glicerina");
+  assert.equal(dados.sentido_fluxo, "Unidirecional");
+});
+
+test("contagem da Pesagem gera uma linha por sala e estado", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [
+      { ensaioTipo: "contagemParticulas", numeroPonto: 1, estado: "repouso", valor05um: "100", valor5um: "5", salaId: "S1" },
+      { ensaioTipo: "contagemParticulas", numeroPonto: 1, estado: "repouso", valor05um: "200", valor5um: "6", salaId: "S2" },
+    ],
+    salas: [
+      { id: "S1", nome: "Sala 1", maquina: "CABINE A", area: 0.79, grau: "C" },
+      { id: "S2", nome: "Sala 2", maquina: "CABINE B", area: 1.2, grau: "C" },
+    ],
+  });
+  assert.equal(dados.contagemLinhas.length, 4);
+  assert.deepEqual(dados.contagemLinhas[0], {
+    equipamento: "CABINE A", area: "0,79", classe: "C (Repouso)", criterio05: "352000", criterio5: "2900", media05: "100", media5: "5",
+  });
+  assert.equal(dados.contagemLinhas[2].equipamento, "CABINE B");
+  assert.equal(dados.contagemLinhas[2].media05, "200");
+});
+
+test("contagem da Pesagem mostra a segunda sala declarada mesmo sem medição", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [
+      { ensaioTipo: "contagemParticulas", numeroPonto: 1, estado: "repouso", valor05um: "100", valor5um: "5", salaId: "S1" },
+    ],
+    salas: [
+      { id: "S1", nome: "Sala 1", maquina: "CABINE A", area: 0.79, grau: "C" },
+      { id: "S2", nome: "Sala 2", maquina: "CABINE B", area: 1.2, grau: "C" },
+    ],
+  });
+  assert.equal(dados.contagemLinhas.length, 4);
+  assert.equal(dados.contagemLinhas[2].equipamento, "CABINE B");
+  assert.equal(dados.contagemLinhas[2].media05, "-");
+});
+
+test("resultado geral de cada ensaio marca conforme ou não conforme", () => {
+  const dados = placeholdersDeResultados({
+    resultadosEnsaios: [
+      { ensaioTipo: "velocidadeFluxo", conforme: true },
+      { ensaioTipo: "integridadeFiltros", conforme: false },
+    ],
+  });
+  assert.equal(dados.marca_conf_VELOCIDADE, "X");
+  assert.equal(dados.marca_nconf_VELOCIDADE, "");
+  assert.equal(dados.marca_conf_INTEGRIDADE, "");
+  assert.equal(dados.marca_nconf_INTEGRIDADE, "X");
+  assert.equal(dados.marca_conf_RUIDO, "");
+});
+
+test("luminosidade da Pesagem exige todos os pontos a 500 lux ou mais", () => {
+  const pontos = [600, 550, 480].map((valor, i) => ({ ensaioTipo: "luminosidade", numeroPonto: i + 1, valor05um: String(valor) }));
+  assert.equal(placeholdersDeResultados({ pontosLeitura: pontos }).resultado_lum, "Não conforme");
+  assert.equal(placeholdersDeResultados({ pontosLeitura: pontos.slice(0, 2) }).resultado_lum, "Conforme");
+});
+
+test("ruído da Pesagem informa resultado por estado", () => {
+  const repouso = [1, 2, 3, 4, 5].map((n) => ({ ensaioTipo: "nivelRuido", numeroPonto: n, estado: "repouso", valor05um: "80" }));
+  const operacao = [1, 2, 3, 4, 5].map((n) => ({ ensaioTipo: "nivelRuido", numeroPonto: n, estado: "operacao", valor05um: n === 3 ? "90" : "80" }));
+  const dados = placeholdersDeResultados({ pontosLeitura: [...repouso, ...operacao] });
+  assert.equal(dados.resultado_ruido_rep, "Conforme");
+  assert.equal(dados.resultado_ruido_op, "Não conforme");
+});
+
+test("paralelismo da Pesagem lista cada ponto com L, X e ângulo", () => {
+  const dados = placeholdersDeResultados({
+    pontosLeitura: [{ ensaioTipo: "paralelismoFluxo", numeroPonto: 1, valor05um: "14.04" }],
+    resultadosEnsaios: [{ ensaioTipo: "paralelismoFluxo", dados: { paralelismo: [{ numeroPonto: 1, distanciaL: "900", distanciaX: "225" }] } }],
+  });
+  assert.deepEqual(dados.paralelismoPontos, [{ numero: "1", L: "900", X: "225", angulo: "14,04", criterio: "\u2264 14 \u00ba" }]);
 });

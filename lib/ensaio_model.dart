@@ -87,13 +87,13 @@ class EnsaioModel {
         tipo: TipoEnsaio.avaliacaoFiltragem,
         nome: 'Avaliação do Sistema de Filtragem',
         ferramentasNecessarias: const ['Manômetro'],
-        aplicavelTiposProjeto: const [tipoFluxoLaminar],
+        aplicavelTiposProjeto: const [tipoFluxoLaminar, tipoPesagem],
       ),
       EnsaioModel(
         tipo: TipoEnsaio.velocidadeFluxo,
         nome: 'Velocidade e Uniformidade do Fluxo de Ar',
         ferramentasNecessarias: const ['Anemômetro'],
-        aplicavelTiposProjeto: const [tipoFluxoLaminar],
+        aplicavelTiposProjeto: const [tipoFluxoLaminar, tipoPesagem],
       ),
       EnsaioModel(
         tipo: TipoEnsaio.vazaoInsuflacao,
@@ -116,19 +116,19 @@ class EnsaioModel {
         tipo: TipoEnsaio.nivelRuido,
         nome: 'Nível de Ruído',
         ferramentasNecessarias: const ['Decibelímetro'],
-        aplicavelTiposProjeto: const [tipoFluxoLaminar],
+        aplicavelTiposProjeto: const [tipoFluxoLaminar, tipoPesagem],
       ),
       EnsaioModel(
         tipo: TipoEnsaio.luminosidade,
         nome: 'Luminosidade',
         ferramentasNecessarias: const ['Luxímetro'],
-        aplicavelTiposProjeto: const [tipoFluxoLaminar],
+        aplicavelTiposProjeto: const [tipoFluxoLaminar, tipoPesagem],
       ),
       EnsaioModel(
         tipo: TipoEnsaio.paralelismoFluxo,
         nome: 'Paralelismo do Fluxo de Ar',
         ferramentasNecessarias: const ['Máquina de Fumaça'],
-        aplicavelTiposProjeto: const [tipoFluxoLaminar],
+        aplicavelTiposProjeto: const [tipoFluxoLaminar, tipoPesagem],
       ),
       EnsaioModel(
         tipo: TipoEnsaio.pressao,
@@ -140,7 +140,7 @@ class EnsaioModel {
         tipo: TipoEnsaio.visualizacaoFluxo,
         nome: 'Visualização do Fluxo de Ar',
         ferramentasNecessarias: const ['Máquina de Fumaça'],
-        aplicavelTiposProjeto: const [tipoFluxoLaminar, tipoHvac],
+        aplicavelTiposProjeto: const [tipoFluxoLaminar, tipoHvac, tipoPesagem],
       ),
       EnsaioModel(
         tipo: TipoEnsaio.contagemParticulas,

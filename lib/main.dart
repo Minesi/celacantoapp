@@ -164,7 +164,7 @@ class _LoginPageState extends State<LoginPage> {
         unawaited(
           OfflineAuthorizationService.instance
               .sincronizarChavesOnline()
-              .timeout(const Duration(seconds: 3))
+              .timeout(const Duration(seconds: 15))
               .then(
                 (_) {},
                 onError: (Object erro, StackTrace _) {

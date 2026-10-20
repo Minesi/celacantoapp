@@ -39,6 +39,8 @@ class _ProjetosRealizadosPageState extends State<ProjetosRealizadosPage> {
   final TesteCatalogoService _testeCatalogoService = TesteCatalogoService();
 
   bool _carregando = true;
+  bool _sincronizando = false;
+  (int, int) _progressoSincronizacao = (0, 0);
   bool _aprovando = false;
   List<Map<String, dynamic>> _projetos = [];
   Map<String, String> _nomeEmpresaPorCnpj = {};
@@ -52,12 +54,43 @@ class _ProjetosRealizadosPageState extends State<ProjetosRealizadosPage> {
     _carregarProjetos();
   }
 
+  Widget _barraSincronizacao() {
+    final (atual, total) = _progressoSincronizacao;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          LinearProgressIndicator(value: total == 0 ? null : atual / total),
+          const SizedBox(height: 4),
+          Text(
+            total == 0 ? 'Sincronizando projetos...' : 'Sincronizando $atual de $total projetos',
+            style: const TextStyle(fontSize: 12, color: Colors.grey),
+          ),
+        ],
+      ),
+    );
+  }
+
   Future<void> _carregarProjetos() async {
     setState(() => _carregando = true);
     try {
       final dominio = _authService.extrairDominio(widget.emailLogado);
+      final locais = await _projetoService.listarLocais();
+      if (!mounted) return;
+      setState(() {
+        _projetos = locais;
+        _carregando = false;
+        _sincronizando = true;
+      });
+
       final empresas = await _empresaService.listarPorDominio(dominio);
-      final projetos = await _projetoService.listarPorDominio(dominio);
+      final projetos = await _projetoService.sincronizarDominio(
+        dominio,
+        onProgresso: (atual, total) {
+          if (mounted) setState(() => _progressoSincronizacao = (atual, total));
+        },
+      );
 
       if (!mounted) return;
       setState(() {
@@ -65,11 +98,14 @@ class _ProjetosRealizadosPageState extends State<ProjetosRealizadosPage> {
           for (final e in empresas) (e['cnpj']?.toString() ?? ''): (e['nomeFantasia']?.toString() ?? ''),
         };
         _projetos = projetos;
-        _carregando = false;
+        _sincronizando = false;
       });
     } catch (e) {
       if (!mounted) return;
-      setState(() => _carregando = false);
+      setState(() {
+        _carregando = false;
+        _sincronizando = false;
+      });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Erro ao carregar projetos: $e'), backgroundColor: Colors.red),
       );
@@ -704,32 +740,39 @@ class _ProjetosRealizadosPageState extends State<ProjetosRealizadosPage> {
       ),
       body: _carregando
           ? const Center(child: CircularProgressIndicator())
-          : RefreshIndicator(
-              onRefresh: _carregarProjetos,
-              child: _projetos.isEmpty
-                  ? ListView(
-                      children: const [
-                        Padding(
-                          padding: EdgeInsets.all(32),
-                          child: Text(
-                            'Nenhum projeto encontrado ainda.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.grey),
+          : Column(
+              children: [
+                if (_sincronizando) _barraSincronizacao(),
+                Expanded(
+                  child: RefreshIndicator(
+                    onRefresh: _carregarProjetos,
+                    child: _projetos.isEmpty
+                        ? ListView(
+                            children: [
+                              Padding(
+                                padding: const EdgeInsets.all(32),
+                                child: Text(
+                                  _sincronizando ? 'Buscando projetos na nuvem...' : 'Nenhum projeto encontrado ainda.',
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(color: Colors.grey),
+                                ),
+                              ),
+                            ],
+                          )
+                        : Column(
+                            children: [
+                              FiltroProjetosBar(
+                                projetos: _projetos,
+                                nomeEmpresaPorCnpj: _nomeEmpresaPorCnpj,
+                                filtro: _filtro,
+                                onChanged: (f) => setState(() => _filtro = f),
+                              ),
+                              Expanded(child: _buildLista(_filtro.aplicar(_projetos))),
+                            ],
                           ),
-                        ),
-                      ],
-                    )
-                  : Column(
-                      children: [
-                        FiltroProjetosBar(
-                          projetos: _projetos,
-                          nomeEmpresaPorCnpj: _nomeEmpresaPorCnpj,
-                          filtro: _filtro,
-                          onChanged: (f) => setState(() => _filtro = f),
-                        ),
-                        Expanded(child: _buildLista(_filtro.aplicar(_projetos))),
-                      ],
-                    ),
+                  ),
+                ),
+              ],
             ),
     );
   }

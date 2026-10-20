@@ -4,6 +4,13 @@ import 'package:flutter/material.dart';
 import 'package:camera/camera.dart';
 import 'package:google_mlkit_text_recognition/google_mlkit_text_recognition.dart'; // Motor real do OCR
 
+class ResultadoCapturaOcr {
+  final List<String> valores;
+  final List<bool> digitadosManualmente;
+
+  const ResultadoCapturaOcr({required this.valores, required this.digitadosManualmente});
+}
+
 class CapturaOcrPage extends StatefulWidget {
   final String nomeFerramenta;
 
@@ -34,6 +41,8 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObse
   // --- CONTROLE DE ESTADO DO FLUXO DE MEDIÇÕES (todas para widget.nomeFerramenta) ---
   int _tentativaLeituraAtual = 1;
   final List<String> _leiturasDaFerramenta = [];
+  final List<bool> _leiturasDigitadas = [];
+  bool _valorAtualDigitado = false;
 
   @override
   void initState() {
@@ -148,7 +157,7 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObse
       });
 
       // 5. Envia o resultado filtrado para a validação em caixa de diálogo do técnico
-      _processarValorCapturado(valorFinalFiltrado);
+      _processarValorCapturado(valorFinalFiltrado, digitado: false);
 
     } catch (e) {
       debugPrint('Falha no motor OCR: $e');
@@ -162,7 +171,8 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObse
     }
   }
 
-  void _processarValorCapturado(String valorLido) {
+  void _processarValorCapturado(String valorLido, {required bool digitado}) {
+    _valorAtualDigitado = digitado;
     _ocrManualController.clear();
     
     showDialog(
@@ -225,6 +235,7 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObse
 
   void _registrarEAvancarFluxo(String valorDefinitivo) {
     _leiturasDaFerramenta.add(valorDefinitivo);
+    _leiturasDigitadas.add(_valorAtualDigitado);
 
     if (_leiturasDaFerramenta.length >= maxLeiturasPorFerramenta) {
       // Teto atingido: encerra automaticamente, sem perguntar por mais uma captura
@@ -234,7 +245,7 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObse
           backgroundColor: Colors.orange,
         ),
       );
-      Navigator.pop(context, _leiturasDaFerramenta);
+      Navigator.pop(context, _resultadoAtual());
       return;
     }
 
@@ -252,7 +263,7 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObse
           TextButton(
             onPressed: () {
               Navigator.pop(context); // fecha o diálogo
-              Navigator.pop(context, _leiturasDaFerramenta); // retorna a lista final desta ferramenta
+              Navigator.pop(context, _resultadoAtual()); // retorna a lista final desta ferramenta
             },
             child: const Text('Foi a Última'),
           ),
@@ -271,6 +282,11 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObse
       ),
     );
   }
+
+  ResultadoCapturaOcr _resultadoAtual() => ResultadoCapturaOcr(
+        valores: List<String>.of(_leiturasDaFerramenta),
+        digitadosManualmente: List<bool>.of(_leiturasDigitadas),
+      );
 
   @override
   Widget build(BuildContext context) {
@@ -320,7 +336,7 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObse
                   onPressed: () {
                     if (_ocrManualController.text.trim().isNotEmpty) {
                       final valorDigitado = _ocrManualController.text.trim();
-                      _processarValorCapturado(valorDigitado);
+                      _processarValorCapturado(valorDigitado, digitado: true);
                     }
                   },
                   icon: const Icon(Icons.check, color: Colors.white),
@@ -482,7 +498,7 @@ class _CapturaOcrPageState extends State<CapturaOcrPage> with WidgetsBindingObse
                             onPressed: () {
                               if (_ocrManualController.text.trim().isNotEmpty) {
                                 String valorDigitado = _ocrManualController.text.trim();
-                                _processarValorCapturado(valorDigitado);
+                                _processarValorCapturado(valorDigitado, digitado: true);
                               }
                             },
                             icon: const Icon(Icons.check, color: Colors.white),

@@ -18,6 +18,7 @@ import 'history_entry_model.dart';
 import 'preview_relatorio_widget.dart';
 import 'projeto_model.dart';
 import 'projeto_service.dart';
+import 'regras_pesagem.dart';
 import 'sala_model.dart';
 import 'sistema_model.dart';
 import 'sistema_service.dart';
@@ -561,6 +562,57 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
     });
   }
 
+  List<Widget> _camposPesagemDaSala(SalaModel sala) {
+    if (_tipoProjetoSelecionado != EnsaioModel.tipoPesagem) return const [];
+    final campos = <Widget>[];
+    if (_ensaiosSelecionados.contains(TipoEnsaio.visualizacaoFluxo)) {
+      final visual = sala.configEnsaios[TipoEnsaio.visualizacaoFluxo.name] ?? const <String, dynamic>{};
+      campos.add(Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: Row(
+          children: [
+            Expanded(
+              child: TextFormField(
+                initialValue: visual['tipoFumaca']?.toString() ?? 'Glicerina',
+                decoration: const InputDecoration(labelText: 'Tipo de fumaça', isDense: true),
+                onChanged: (valor) => _atualizarConfiguracaoEnsaio(sala, TipoEnsaio.visualizacaoFluxo, 'tipoFumaca', valor),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: TextFormField(
+                initialValue: visual['sentidoFluxo']?.toString() ?? 'Unidirecional',
+                decoration: const InputDecoration(labelText: 'Sentido do fluxo', isDense: true),
+                onChanged: (valor) => _atualizarConfiguracaoEnsaio(sala, TipoEnsaio.visualizacaoFluxo, 'sentidoFluxo', valor),
+              ),
+            ),
+          ],
+        ),
+      ));
+    }
+    if (_ensaiosSelecionados.contains(TipoEnsaio.contagemParticulas)) {
+      final contagem = sala.configEnsaios[TipoEnsaio.contagemParticulas.name] ?? const <String, dynamic>{};
+      for (final estado in const ['repouso', 'operacao']) {
+        final rotuloEstado = estado == 'repouso' ? 'Repouso' : 'Operação';
+        final padrao = RegrasPesagem.limitesContagemGrauC(operacao: estado == 'operacao');
+        for (final campo in const ['criterioMax', 'criterioMax5um']) {
+          final chave = '${campo}_$estado';
+          final rotuloParticula = campo == 'criterioMax' ? '0,5 µm' : '5 µm';
+          campos.add(Padding(
+            padding: const EdgeInsets.only(bottom: 8),
+            child: TextFormField(
+              initialValue: contagem[chave]?.toString() ?? (sala.grau == GrauSala.c ? padrao[campo].toString() : ''),
+              keyboardType: TextInputType.number,
+              decoration: InputDecoration(labelText: 'Limite $rotuloEstado — $rotuloParticula (part./m³)', isDense: true),
+              onChanged: (valor) => _atualizarConfiguracaoEnsaio(sala, TipoEnsaio.contagemParticulas, chave, valor),
+            ),
+          ));
+        }
+      }
+    }
+    return campos;
+  }
+
   Widget _configuracaoEnsaiosDasSalas() {
     if (_salas.isEmpty || _ensaiosSelecionados.isEmpty) return const SizedBox.shrink();
     return Column(
@@ -604,6 +656,27 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                           onChanged: (valor) => _atualizarConfiguracaoEnsaio(sala, tipo, 'pontos', valor),
                         ),
                       ),
+                    if (tipo == TipoEnsaio.velocidadeFluxo)
+                      Expanded(
+                        child: TextFormField(
+                          initialValue: configuracao['mediaEsperada']?.toString() ?? '',
+                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                          decoration: const InputDecoration(labelText: 'Média esperada (m/s)', isDense: true),
+                          onChanged: (valor) => _atualizarConfiguracaoEnsaio(sala, tipo, 'mediaEsperada', valor),
+                        ),
+                      ),
+                    if (tipo == TipoEnsaio.velocidadeFluxo)
+                      Expanded(
+                        flex: 2,
+                        child: TextFormField(
+                          initialValue: configuracao['localizacoes']?.toString() ?? '',
+                          decoration: const InputDecoration(
+                            labelText: 'Localização dos pontos (separe por vírgula)',
+                            isDense: true,
+                          ),
+                          onChanged: (valor) => _atualizarConfiguracaoEnsaio(sala, tipo, 'localizacoes', valor),
+                        ),
+                      ),
                     if (tipo == TipoEnsaio.contagemParticulas)
                       Expanded(
                         child: DropdownButtonFormField<String>(
@@ -629,6 +702,7 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
                 ),
               );
             }),
+            ..._camposPesagemDaSala(sala),
             const Divider(height: 16),
           ];
         }),
@@ -658,6 +732,14 @@ class _ElaboracaoRelatorioPageState extends State<ElaboracaoRelatorioPage> {
         final pontos = int.tryParse(sala.configEnsaios[tipo.name]?['pontos']?.toString() ?? '') ?? 0;
         if (pontos < 1) {
           return 'Defina a quantidade de pontos de ${EnsaioModel.catalogoPadrao().firstWhere((e) => e.tipo == tipo).nome} para a sala ${sala.nome}.';
+        }
+        final localizacoes = (sala.configEnsaios[tipo.name]?['localizacoes']?.toString() ?? '')
+            .split(',')
+            .map((texto) => texto.trim())
+            .where((texto) => texto.isNotEmpty)
+            .length;
+        if (tipo == TipoEnsaio.velocidadeFluxo && localizacoes > 0 && localizacoes != pontos) {
+          return 'A sala ${sala.nome} tem $pontos ponto(s) por filtro, mas $localizacoes localização(ões) informada(s). Ajuste para bater.';
         }
       }
     }

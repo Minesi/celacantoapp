@@ -19,9 +19,14 @@ class ProjetoService implements ExecucaoProjetoService {
   final FirebaseFirestore _firestore = FirebaseFirestore.instance;
   final EmpresaService _empresaService = EmpresaService();
 
-  /// Sincroniza os projetos das empresas do domínio a partir do Firestore para o cache local
-  /// e retorna a lista local já atualizada (mesmo formato de Map usado pelo SQLite).
-  Future<List<Map<String, dynamic>>> listarPorDominio(String dominio) async {
+  /// Projetos já gravados neste aparelho, sem consultar a nuvem.
+  Future<List<Map<String, dynamic>>> listarLocais() => _dbHelper.getProjetos();
+
+  /// Baixa da nuvem os projetos do domínio para o cache local, avisando o progresso (atual, total).
+  Future<List<Map<String, dynamic>>> sincronizarDominio(
+    String dominio, {
+    void Function(int atual, int total)? onProgresso,
+  }) async {
     try {
       final empresas = await _empresaService.listarPorDominio(dominio);
       final cnpjs = empresas
@@ -30,6 +35,7 @@ class ProjetoService implements ExecucaoProjetoService {
           .toList();
 
       // Firestore 'whereIn' aceita no máximo 30 valores; suficiente para o volume atual de clientes.
+      final documentos = <Map<String, dynamic>>[];
       for (var i = 0; i < cnpjs.length; i += 30) {
         final lote = cnpjs.sublist(
           i,
@@ -41,10 +47,13 @@ class ProjetoService implements ExecucaoProjetoService {
             .collection(FirestoreColecoes.projetos)
             .where('cnpjEmpresa', whereIn: lote)
             .get();
+        documentos.addAll(snapshotNuvem.docs.map((doc) => doc.data()));
+      }
 
-        for (final doc in snapshotNuvem.docs) {
-          await _dbHelper.insertProjetoSincronizado(doc.data());
-        }
+      onProgresso?.call(0, documentos.length);
+      for (var i = 0; i < documentos.length; i++) {
+        await _dbHelper.insertProjetoSincronizado(documentos[i]);
+        onProgresso?.call(i + 1, documentos.length);
       }
     } catch (e) {
       debugPrint(
@@ -54,6 +63,8 @@ class ProjetoService implements ExecucaoProjetoService {
 
     return await _dbHelper.getProjetos();
   }
+
+  Future<List<Map<String, dynamic>>> listarPorDominio(String dominio) => sincronizarDominio(dominio);
 
   /// Persiste um projeto recém-elaborado no Firestore (quando online) e sempre no cache local,
   /// incluindo salas/handling units/filtros nas tabelas normalizadas.
@@ -172,6 +183,7 @@ class ProjetoService implements ExecucaoProjetoService {
     }
   }
 
+  @override
   Future<void> adicionarHistorico(
     String projetoId,
     HistoryEntry entrada,
